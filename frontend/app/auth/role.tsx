@@ -66,13 +66,13 @@ export default function RoleSelect() {
 const styles = StyleSheet.create({
   bg: { flex: 1, backgroundColor: theme.bg },
   header: { marginTop: 8, marginBottom: 20 },
-  title: { color: theme.text, fontSize: 28, fontWeight: "800", letterSpacing: -0.5 },
-  sub: { color: theme.textDim, fontSize: 14, marginTop: 6 },
+  title: { ...type.displayMd, color: theme.text },
+  sub: { ...type.bodySm, color: theme.textDim, marginTop: 6 },
   cards: { gap: 14 },
   card: { height: 170, borderRadius: theme.radius.lg, overflow: "hidden", borderWidth: 1, borderColor: theme.border },
   cardInner: { flex: 1, padding: 20, justifyContent: "flex-end" },
   iconWrap: { width: 40, height: 40, borderRadius: 12, backgroundColor: "rgba(225,29,72,0.15)", borderWidth: 1, borderColor: "rgba(225,29,72,0.4)", alignItems: "center", justifyContent: "center", marginBottom: 10 },
-  cardTitle: { color: theme.text, fontSize: 22, fontWeight: "800" },
-  cardDesc: { color: theme.textMid, fontSize: 13, marginTop: 4, lineHeight: 19 },
-  err: { color: theme.error, marginTop: 16, fontSize: 13, textAlign: "center" },
+  cardTitle: { ...type.h2, color: theme.text },
+  cardDesc: { ...type.bodySm, color: theme.textMid, marginTop: 4 },
+  err: { ...type.caption, color: theme.error, marginTop: 16, textAlign: "center" },
 });
