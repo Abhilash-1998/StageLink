@@ -85,17 +85,90 @@ class ActiveRoleIn(BaseModel):
 
 class MusicianProfileIn(BaseModel):
     bio: Optional[str] = ""
+    tagline: Optional[str] = None
+    username: Optional[str] = None
     city: str
+    state: Optional[str] = None
+    country: Optional[str] = "India"
     genres: List[str] = []
     instruments: List[str] = []
     languages: List[str] = []
+    professions: List[str] = []
+    skills: List[str] = []
     experience_years: int = 0
     pricing_per_hour: int = 0
+    willing_to_travel: bool = True
+    travel_radius_km: Optional[int] = 50
+    dob: Optional[str] = None
+    gender: Optional[str] = None
     demo_video_url: Optional[str] = None
     youtube_url: Optional[str] = None
     instagram_url: Optional[str] = None
+    facebook_url: Optional[str] = None
+    spotify_url: Optional[str] = None
+    soundcloud_url: Optional[str] = None
+    website_url: Optional[str] = None
+    linkedin_url: Optional[str] = None
+    apple_music_url: Optional[str] = None
     avatar_url: Optional[str] = None
     cover_url: Optional[str] = None
+    visibility: Optional[Literal['public', 'followers', 'private']] = 'public'
+    hide_pricing: Optional[bool] = False
+    hide_location: Optional[bool] = False
+    hide_contact: Optional[bool] = False
+
+class ProfilePatchIn(BaseModel):
+    """Partial update for a musician profile. All fields optional."""
+    bio: Optional[str] = None
+    tagline: Optional[str] = None
+    username: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    country: Optional[str] = None
+    genres: Optional[List[str]] = None
+    instruments: Optional[List[str]] = None
+    languages: Optional[List[str]] = None
+    professions: Optional[List[str]] = None
+    skills: Optional[List[str]] = None
+    experience_years: Optional[int] = None
+    pricing_per_hour: Optional[int] = None
+    willing_to_travel: Optional[bool] = None
+    travel_radius_km: Optional[int] = None
+    dob: Optional[str] = None
+    gender: Optional[str] = None
+    demo_video_url: Optional[str] = None
+    youtube_url: Optional[str] = None
+    instagram_url: Optional[str] = None
+    facebook_url: Optional[str] = None
+    spotify_url: Optional[str] = None
+    soundcloud_url: Optional[str] = None
+    website_url: Optional[str] = None
+    linkedin_url: Optional[str] = None
+    apple_music_url: Optional[str] = None
+    avatar_url: Optional[str] = None
+    cover_url: Optional[str] = None
+    visibility: Optional[Literal['public', 'followers', 'private']] = None
+    hide_pricing: Optional[bool] = None
+    hide_location: Optional[bool] = None
+    hide_contact: Optional[bool] = None
+    availability: Optional[dict] = None  # {weekly:{mon..sun:[slots]}, unavailable_dates:[], vacation:{start,end}}
+
+class PortfolioItemIn(BaseModel):
+    title: str
+    description: Optional[str] = ""
+    category: Optional[str] = "Performance"
+    media_url: str
+    media_type: Literal['image', 'video', 'audio', 'link', 'pdf'] = 'image'
+    thumbnail_url: Optional[str] = None
+    tags: List[str] = []
+    date: Optional[str] = None
+
+class ServiceIn(BaseModel):
+    title: str
+    description: str
+    price: int
+    pricing_type: Literal['per_hour', 'per_event', 'per_song', 'starting_at'] = 'per_hour'
+    duration: Optional[str] = None
 
 class OrganizerProfileIn(BaseModel):
     org_name: str
@@ -336,6 +409,94 @@ async def upsert_musician(inp: MusicianProfileIn, u=Depends(get_user)):
     if inp.avatar_url: updates['avatar_url'] = inp.avatar_url
     await db.users.update_one({'id': u['id']}, {'$set': updates})
     return {'ok': True}
+
+@api.patch("/profile/musician")
+async def patch_musician(inp: ProfilePatchIn, u=Depends(get_user)):
+    updates = {k: v for k, v in inp.dict(exclude_unset=True).items() if v is not None}
+    if not updates:
+        return {'ok': True, 'updated': 0}
+    updates['updated_at'] = now_iso()
+    await db.musicians.update_one({'user_id': u['id']}, {'$set': updates}, upsert=True)
+    user_updates = {}
+    if 'avatar_url' in updates: user_updates['avatar_url'] = updates['avatar_url']
+    if user_updates:
+        await db.users.update_one({'id': u['id']}, {'$set': user_updates})
+    return {'ok': True, 'updated': len(updates) - 1}
+
+@api.post("/profile/portfolio")
+async def add_portfolio_item(inp: PortfolioItemIn, u=Depends(get_user)):
+    item = inp.dict()
+    item['id'] = str(uuid.uuid4())
+    item['created_at'] = now_iso()
+    await db.musicians.update_one(
+        {'user_id': u['id']},
+        {'$push': {'portfolio_items': item}, '$set': {'updated_at': now_iso()}},
+        upsert=True,
+    )
+    return item
+
+@api.delete("/profile/portfolio/{item_id}")
+async def delete_portfolio_item(item_id: str, u=Depends(get_user)):
+    r = await db.musicians.update_one(
+        {'user_id': u['id']},
+        {'$pull': {'portfolio_items': {'id': item_id}}, '$set': {'updated_at': now_iso()}},
+    )
+    return {'deleted': r.modified_count}
+
+@api.post("/profile/services")
+async def add_service(inp: ServiceIn, u=Depends(get_user)):
+    svc = inp.dict()
+    svc['id'] = str(uuid.uuid4())
+    svc['created_at'] = now_iso()
+    await db.musicians.update_one(
+        {'user_id': u['id']},
+        {'$push': {'services': svc}, '$set': {'updated_at': now_iso()}},
+        upsert=True,
+    )
+    return svc
+
+@api.delete("/profile/services/{svc_id}")
+async def delete_service(svc_id: str, u=Depends(get_user)):
+    r = await db.musicians.update_one(
+        {'user_id': u['id']},
+        {'$pull': {'services': {'id': svc_id}}, '$set': {'updated_at': now_iso()}},
+    )
+    return {'deleted': r.modified_count}
+
+def _compute_completion(m: dict) -> dict:
+    checks = [
+        ('avatar_url', 'Add a profile photo', 15),
+        ('cover_url', 'Add a cover photo', 5),
+        ('bio', 'Write a short bio', 10),
+        ('city', 'Set your city', 5),
+        ('genres', 'Choose your genres', 10),
+        ('instruments', 'List your instruments', 10),
+        ('professions', 'Add your professions', 10),
+        ('pricing_per_hour', 'Set your hourly rate', 10),
+        ('experience_years', 'Add years of experience', 5),
+        ('portfolio_items', 'Upload portfolio items', 10),
+        ('services', 'List services you offer', 5),
+        ('youtube_url', 'Link your YouTube', 3),
+        ('instagram_url', 'Link your Instagram', 2),
+    ]
+    total_weight = sum(w for _, _, w in checks)
+    score = 0
+    missing = []
+    for field, prompt, weight in checks:
+        v = m.get(field)
+        has = bool(v) if not isinstance(v, (int, float)) else v > 0
+        if has:
+            score += weight
+        else:
+            missing.append({'field': field, 'prompt': prompt, 'weight': weight})
+    pct = int((score / total_weight) * 100)
+    missing.sort(key=lambda x: -x['weight'])
+    return {'completion': pct, 'suggestions': missing[:5]}
+
+@api.get("/profile/completion")
+async def profile_completion(u=Depends(get_user)):
+    m = await db.musicians.find_one({'user_id': u['id']}, {'_id': 0}) or {}
+    return _compute_completion(m)
 
 @api.post("/profile/organizer")
 async def upsert_organizer(inp: OrganizerProfileIn, u=Depends(get_user)):
