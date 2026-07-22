@@ -1353,6 +1353,23 @@ async def my_entities(u=Depends(get_user)):
         'posts': await db.posts.find({'author_id': u['id']}, {'_id': 0}).to_list(50),
     }
 
+@api.get("/users/{uid}/entities")
+async def user_entities(uid: str):
+    """Public view of a user's entities. Same shape as /entities/mine but
+    excludes posts with visibility != 'public'. Everything else is public
+    marketplace data."""
+    return {
+        'gigs': await db.gigs.find({'organizer_id': uid}, {'_id': 0}).sort('created_at', -1).to_list(50),
+        'bands': await db.bands.find({'owner_id': uid}, {'_id': 0}).sort('created_at', -1).to_list(50),
+        'equipment': await db.equipment.find({'owner_id': uid}, {'_id': 0}).sort('created_at', -1).to_list(50),
+        'studios': await db.studios.find({'owner_id': uid}, {'_id': 0}).sort('created_at', -1).to_list(50),
+        'lessons': await db.lessons.find({'teacher_id': uid}, {'_id': 0}).sort('created_at', -1).to_list(50),
+        'posts': await db.posts.find(
+            {'author_id': uid, '$or': [{'visibility': 'public'}, {'visibility': {'$exists': False}}]},
+            {'_id': 0}
+        ).sort('created_at', -1).to_list(50),
+    }
+
 app.include_router(api)
 app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=["*"],
                    allow_methods=["*"], allow_headers=["*"])

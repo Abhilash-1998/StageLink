@@ -8,25 +8,27 @@ import { ProfileView } from "@/src/components/ProfileView";
 
 /**
  * Public professional profile viewer — thin container that reuses the same
- * ProfileView component as (tabs)/profile.
- * Any user reference in the app (post author, comment, discover card, chat
- * header, gig organizer) routes here via /user/{id}.
+ * ProfileView component as (tabs)/profile. Loads posts + listings via the
+ * public /users/{uid}/entities endpoint so the layout is identical to own.
  */
 export default function UserProfile() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { user, fetchApi } = useAuth();
   const [data, setData] = useState<any>(null);
+  const [entities, setEntities] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [following, setFollowing] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
-    // If it's the current user, redirect to their own profile tab.
     if (id === user?.id) { router.replace("/(tabs)/profile"); return; }
     try {
-      const d: any = await fetchApi(`/profile/musician/${id}`);
-      setData(d);
-    } catch { setData(null); }
+      const [d, ent]: [any, any] = await Promise.all([
+        fetchApi(`/profile/musician/${id}`),
+        fetchApi(`/users/${id}/entities`).catch(() => null),
+      ]);
+      setData(d); setEntities(ent);
+    } catch { setData(null); setEntities(null); }
     finally { setLoading(false); }
   }, [fetchApi, id, user?.id]);
 
@@ -59,6 +61,7 @@ export default function UserProfile() {
       mode="public"
       targetUser={data.user}
       profile={data}
+      entities={entities}
       following={following}
       onFollow={toggleFollow}
     />

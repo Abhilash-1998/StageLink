@@ -1,0 +1,40 @@
+{
+  "summary": "Unified profile layout verified. (a) All 3 tabs (Media/Posts/Listings) render on BOTH own and public profiles — the key regression check passes. (b) Own profile shows Edit + Settings; public shows Follow + Message. (c) Delete controls (post-del, gig-del, band-del, eq-del, studio-del, lesson-del, svc-del) render ONLY on own — zero delete controls on public profile. (d) Settings screen fully replaces the old Applications/Insights/Sign out inline section. Backend 10/12 pass (1 pre-existing model bug, 1 skipped because musician role cannot create gigs). Frontend 100% of the parity checks pass. NO deprecated Expo packages detected.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /api/posts",
+        "issue": "`PostIn` Pydantic model does not include a `visibility` field, so the value sent by the client is silently discarded. As a result, /api/users/{uid}/entities cannot actually filter private posts — the filter only works because posts never get a visibility field written. If the UI ever begins sending private/draft posts, they will leak on the public profile. Fix: add `visibility: Optional[str] = 'public'` to PostIn and persist `doc['visibility'] = inp.visibility` in create_post (server.py ~L1189-1198)."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_unified_profile.py",
+    "/app/test_reports/pytest/iteration_7.xml"
+  ],
+  "action_items": [
+    "(Optional / minor) Extend the `PostIn` model in backend/server.py to accept `visibility` and persist it, so the public/private filter in /api/users/{uid}/entities becomes truly enforced. Currently, because visibility is never stored, the filter passes only by luck."
+  ],
+  "critical_code_review_comments": [
+    "ProfileView.tsx correctly gates ONLY delete controls behind isOwn — tabs and tab bodies always render for both modes. Verified line-by-line: L228-354.",
+    "Settings screen (/app/frontend/app/settings.tsx) uses SafeAreaView, correct testIDs, and StyleSheet.create.",
+    "user/[id]/index.tsx correctly loads /users/{uid}/entities in parallel with /profile/musician/{id} and passes both to ProfileView.",
+    "Tab bar (_layout.tsx) has NO testID on its Tabs.Screen items — not blocking but future tests would benefit from tabBarTestID on each Tabs.Screen."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_unified_profile.py (new)"
+  ],
+  "success_rate": {"backend": "83% (10/12; 1 minor pre-existing bug, 1 skipped by role)", "frontend": "100% (all parity, delete-gating, tabs, navigation, and settings checks pass)"},
+  "seed_data_creation": "No seed data created. Temporary TEST_ posts created during backend CRUD tests were all cleaned up in teardown.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Test file /app/backend/tests/test_unified_profile.py covers the new /users/{uid}/entities endpoint, entities/mine regression, followers/following, follow toggle, post CRUD, and comment CRUD (using the actual endpoint shapes: POST /api/posts/comment with post_id in body, DELETE /api/comments/{cid}). The only real backend gap is that PostIn does not persist a visibility field. Frontend testIDs used: edit-profile-cta, settings-cta (own), user-follow, user-message (public), tab-grid/tab-posts/tab-listings (both), stat-followers/stat-following (both), post-del-*, gig-del-*, band-del-*, eq-del-*, studio-del-*, lesson-del-* (own only), settings-back, settings-edit-profile, settings-applications, settings-insights, settings-signout. Login testIDs are login-email-input, login-password-input, login-submit-button.",
+  "rca_of_issue": "Post visibility leak RCA: /api/posts (POST) uses `PostIn` Pydantic model that omits `visibility`. In create_post, the response doc is built by explicitly picking known fields (text, media_url, media_type) — extra fields in the request body are dropped. Consequently, no post ever has a `visibility` value in Mongo. The /users/{uid}/entities filter `{'$or': [{'visibility':'public'}, {'visibility': {'$exists': False}}]}` matches every post because the field never exists. Reproduction: POST /api/posts with body {\"text\":\"x\",\"visibility\":\"private\"} then GET /api/users/{uid}/entities — the private post appears in `posts`. Fix: (1) add `visibility: Optional[str] = 'public'` to PostIn; (2) in create_post add `'visibility': inp.visibility` when building doc. Severity: low today (no UI writes private posts yet); high if private/draft feature ships."
+}

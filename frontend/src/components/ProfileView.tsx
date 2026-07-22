@@ -102,7 +102,7 @@ export function ProfileView({
           </View>
         </View>
 
-        {/* Actions */}
+        {/* Actions — Edit + Settings for own; Follow + Message for public */}
         <View style={styles.actionRow}>
           {isOwn ? (
             <>
@@ -110,9 +110,9 @@ export function ProfileView({
                 <Ionicons name="create-outline" size={15} color="#fff" />
                 <Text style={[styles.actionBtnTxt, { color: "#fff" }]}>Edit profile</Text>
               </Pressable>
-              <Pressable testID="share-profile" style={styles.actionBtn}>
-                <Ionicons name="share-outline" size={15} color={theme.text} />
-                <Text style={styles.actionBtnTxt}>Share</Text>
+              <Pressable testID="settings-cta" onPress={() => router.push("/settings")} style={styles.actionBtn}>
+                <Ionicons name="settings-outline" size={15} color={theme.text} />
+                <Text style={styles.actionBtnTxt}>Settings</Text>
               </Pressable>
             </>
           ) : (
@@ -221,133 +221,138 @@ export function ProfileView({
           </View>
         )}
 
-        {/* Media / Posts / Listings tabs — identical layout for own & public.
-            Public: shows portfolio only (posts + listings come from server-side
-                    scoping — for now hidden). */}
-        {(portfolio.length > 0 || (isOwn && (posts.length > 0 || totalListings > 0))) && (
-          <View style={styles.section}>
-            <View style={styles.tabRow}>
-              <Pressable testID="tab-grid" onPress={() => setTab("grid")} style={[styles.tabBtn, tab === "grid" && styles.tabBtnOn]}>
-                <Ionicons name="grid-outline" size={16} color={tab === "grid" ? theme.text : theme.textDim} />
-                <Text style={[styles.tabTxt, tab === "grid" && styles.tabTxtOn]}>Media ({portfolio.length})</Text>
-              </Pressable>
-              {isOwn && (
-                <Pressable testID="tab-posts" onPress={() => setTab("posts")} style={[styles.tabBtn, tab === "posts" && styles.tabBtnOn]}>
-                  <Ionicons name="chatbubbles-outline" size={16} color={tab === "posts" ? theme.text : theme.textDim} />
-                  <Text style={[styles.tabTxt, tab === "posts" && styles.tabTxtOn]}>Posts ({posts.length})</Text>
+        {/* Media / Posts / Listings tabs — IDENTICAL layout for own & public.
+            Delete controls only render when isOwn — the layout itself is the same. */}
+        <View style={styles.section}>
+          <View style={styles.tabRow}>
+            <Pressable testID="tab-grid" onPress={() => setTab("grid")} style={[styles.tabBtn, tab === "grid" && styles.tabBtnOn]}>
+              <Ionicons name="grid-outline" size={16} color={tab === "grid" ? theme.text : theme.textDim} />
+              <Text style={[styles.tabTxt, tab === "grid" && styles.tabTxtOn]}>Media ({portfolio.length})</Text>
+            </Pressable>
+            <Pressable testID="tab-posts" onPress={() => setTab("posts")} style={[styles.tabBtn, tab === "posts" && styles.tabBtnOn]}>
+              <Ionicons name="chatbubbles-outline" size={16} color={tab === "posts" ? theme.text : theme.textDim} />
+              <Text style={[styles.tabTxt, tab === "posts" && styles.tabTxtOn]}>Posts ({posts.length})</Text>
+            </Pressable>
+            <Pressable testID="tab-listings" onPress={() => setTab("listings")} style={[styles.tabBtn, tab === "listings" && styles.tabBtnOn]}>
+              <Ionicons name="albums-outline" size={16} color={tab === "listings" ? theme.text : theme.textDim} />
+              <Text style={[styles.tabTxt, tab === "listings" && styles.tabTxtOn]}>Listings ({totalListings})</Text>
+            </Pressable>
+          </View>
+
+          {tab === "grid" && (
+            <View style={styles.mediaGrid}>
+              {portfolio.map((it, i) => (
+                <Pressable key={it.id || i} testID={`media-${it.id}`} onPress={() => openViewer(portfolio, i)} style={styles.mediaTile}>
+                  <Image source={{ uri: it.thumbnail_url || it.media_url }} style={StyleSheet.absoluteFill as any} resizeMode="cover" />
+                  {it.media_type === "video" && (
+                    <View style={styles.playBadge}><Ionicons name="play-circle" size={26} color="#fff" /></View>
+                  )}
                 </Pressable>
-              )}
-              {isOwn && (
-                <Pressable testID="tab-listings" onPress={() => setTab("listings")} style={[styles.tabBtn, tab === "listings" && styles.tabBtnOn]}>
-                  <Ionicons name="albums-outline" size={16} color={tab === "listings" ? theme.text : theme.textDim} />
-                  <Text style={[styles.tabTxt, tab === "listings" && styles.tabTxtOn]}>Listings ({totalListings})</Text>
-                </Pressable>
-              )}
+              ))}
+              {portfolio.length === 0 && <Text style={styles.emptyLine}>No media yet.</Text>}
             </View>
+          )}
 
-            {tab === "grid" && (
-              <View style={styles.mediaGrid}>
-                {portfolio.map((it, i) => (
-                  <Pressable key={it.id || i} testID={`media-${it.id}`} onPress={() => openViewer(portfolio, i)} style={styles.mediaTile}>
-                    <Image source={{ uri: it.thumbnail_url || it.media_url }} style={StyleSheet.absoluteFill as any} resizeMode="cover" />
-                    {it.media_type === "video" && (
-                      <View style={styles.playBadge}><Ionicons name="play-circle" size={26} color="#fff" /></View>
-                    )}
-                  </Pressable>
-                ))}
-                {portfolio.length === 0 && <Text style={styles.emptyLine}>No media yet.</Text>}
-              </View>
-            )}
-
-            {isOwn && tab === "posts" && (
-              <View style={{ gap: 10, marginTop: 8 }}>
-                {posts.length === 0 && <Text style={styles.emptyLine}>No community posts yet.</Text>}
-                {posts.map(post => (
-                  <View key={post.id} style={styles.postCard} testID={`own-post-${post.id}`}>
-                    <View style={styles.postHead}>
-                      <Text style={styles.postDate}>{formatRelative(post.created_at)}</Text>
+          {tab === "posts" && (
+            <View style={{ gap: 10, marginTop: 8 }}>
+              {posts.length === 0 && <Text style={styles.emptyLine}>No community posts yet.</Text>}
+              {posts.map((post: any) => (
+                <View key={post.id} style={styles.postCard} testID={`own-post-${post.id}`}>
+                  <View style={styles.postHead}>
+                    <Text style={styles.postDate}>{formatRelative(post.created_at)}</Text>
+                    {isOwn && (
                       <Pressable testID={`post-del-${post.id}`} onPress={() => del(`/posts/${post.id}`, "this post")} style={styles.delMini}>
                         <Ionicons name="trash-outline" size={13} color={theme.error} />
                       </Pressable>
-                    </View>
-                    <Text style={styles.postTxt} numberOfLines={4}>{post.text}</Text>
-                    {post.media_url && <Image source={{ uri: post.media_url }} style={styles.postThumb} />}
-                    <View style={{ flexDirection: "row", gap: 14, marginTop: 8 }}>
-                      <Text style={styles.postMeta}>❤ {post.like_count || 0}</Text>
-                      <Text style={styles.postMeta}>💬 {post.comment_count || 0}</Text>
-                    </View>
+                    )}
                   </View>
-                ))}
-              </View>
-            )}
+                  <Text style={styles.postTxt} numberOfLines={4}>{post.text}</Text>
+                  {post.media_url && <Image source={{ uri: post.media_url }} style={styles.postThumb} />}
+                  <View style={{ flexDirection: "row", gap: 14, marginTop: 8 }}>
+                    <Text style={styles.postMeta}>❤ {post.like_count || 0}</Text>
+                    <Text style={styles.postMeta}>💬 {post.comment_count || 0}</Text>
+                  </View>
+                </View>
+              ))}
+            </View>
+          )}
 
-            {isOwn && tab === "listings" && (
-              <View style={{ gap: 10, marginTop: 8 }}>
-                {totalListings === 0 && <Text style={styles.emptyLine}>No listings yet — create one from the + tab.</Text>}
-                {gigs.map((g: any) => (
-                  <Pressable key={g.id} onPress={() => router.push(`/gig/${g.id}`)} style={styles.listRow} testID={`list-gig-${g.id}`}>
-                    <View style={styles.listIcon}><Ionicons name="megaphone" size={16} color={theme.brand} /></View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.listTitle}>{g.title}</Text>
-                      <Text style={styles.listMeta}>Gig · {g.city} · {formatDate(g.date)}</Text>
-                    </View>
+          {tab === "listings" && (
+            <View style={{ gap: 10, marginTop: 8 }}>
+              {totalListings === 0 && <Text style={styles.emptyLine}>{isOwn ? "No listings yet — create one from the + tab." : "No listings yet."}</Text>}
+              {gigs.map((g: any) => (
+                <Pressable key={g.id} onPress={() => router.push(`/gig/${g.id}`)} style={styles.listRow} testID={`list-gig-${g.id}`}>
+                  <View style={styles.listIcon}><Ionicons name="megaphone" size={16} color={theme.brand} /></View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.listTitle}>{g.title}</Text>
+                    <Text style={styles.listMeta}>Gig · {g.city} · {formatDate(g.date)}</Text>
+                  </View>
+                  {isOwn && (
                     <Pressable testID={`gig-del-${g.id}`} onPress={() => del(`/gigs/${g.id}`, "this gig")} style={styles.delMini}>
                       <Ionicons name="trash-outline" size={14} color={theme.error} />
                     </Pressable>
-                  </Pressable>
-                ))}
-                {bands.map((b: any) => (
-                  <View key={b.id} style={styles.listRow} testID={`list-band-${b.id}`}>
-                    <View style={styles.listIcon}><Ionicons name="people" size={16} color={theme.brand} /></View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.listTitle}>{b.name}</Text>
-                      <Text style={styles.listMeta}>Band · {b.city}</Text>
-                    </View>
+                  )}
+                </Pressable>
+              ))}
+              {bands.map((b: any) => (
+                <View key={b.id} style={styles.listRow} testID={`list-band-${b.id}`}>
+                  <View style={styles.listIcon}><Ionicons name="people" size={16} color={theme.brand} /></View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.listTitle}>{b.name}</Text>
+                    <Text style={styles.listMeta}>Band · {b.city}</Text>
+                  </View>
+                  {isOwn && (
                     <Pressable testID={`band-del-${b.id}`} onPress={() => del(`/bands/${b.id}`, "this band")} style={styles.delMini}>
                       <Ionicons name="trash-outline" size={14} color={theme.error} />
                     </Pressable>
+                  )}
+                </View>
+              ))}
+              {equipment.map((e: any) => (
+                <View key={e.id} style={styles.listRow} testID={`list-eq-${e.id}`}>
+                  <View style={styles.listIcon}><Ionicons name="cube" size={16} color={theme.brand} /></View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.listTitle}>{e.title}</Text>
+                    <Text style={styles.listMeta}>Equipment · ₹{Number(e.price || 0).toLocaleString("en-IN")}{e.listing_type === "rent" ? "/day" : ""}</Text>
                   </View>
-                ))}
-                {equipment.map((e: any) => (
-                  <View key={e.id} style={styles.listRow} testID={`list-eq-${e.id}`}>
-                    <View style={styles.listIcon}><Ionicons name="cube" size={16} color={theme.brand} /></View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.listTitle}>{e.title}</Text>
-                      <Text style={styles.listMeta}>Equipment · ₹{Number(e.price || 0).toLocaleString("en-IN")}{e.listing_type === "rent" ? "/day" : ""}</Text>
-                    </View>
+                  {isOwn && (
                     <Pressable testID={`eq-del-${e.id}`} onPress={() => del(`/equipment/${e.id}`, "this listing")} style={styles.delMini}>
                       <Ionicons name="trash-outline" size={14} color={theme.error} />
                     </Pressable>
+                  )}
+                </View>
+              ))}
+              {studios.map((s: any) => (
+                <View key={s.id} style={styles.listRow} testID={`list-studio-${s.id}`}>
+                  <View style={styles.listIcon}><Ionicons name="mic" size={16} color={theme.brand} /></View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.listTitle}>{s.name}</Text>
+                    <Text style={styles.listMeta}>Studio · {s.city} · ₹{Number(s.hourly_rate || 0).toLocaleString("en-IN")}/hr</Text>
                   </View>
-                ))}
-                {studios.map((s: any) => (
-                  <View key={s.id} style={styles.listRow} testID={`list-studio-${s.id}`}>
-                    <View style={styles.listIcon}><Ionicons name="mic" size={16} color={theme.brand} /></View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.listTitle}>{s.name}</Text>
-                      <Text style={styles.listMeta}>Studio · {s.city} · ₹{Number(s.hourly_rate || 0).toLocaleString("en-IN")}/hr</Text>
-                    </View>
+                  {isOwn && (
                     <Pressable testID={`studio-del-${s.id}`} onPress={() => del(`/studios/${s.id}`, "this studio")} style={styles.delMini}>
                       <Ionicons name="trash-outline" size={14} color={theme.error} />
                     </Pressable>
+                  )}
+                </View>
+              ))}
+              {lessons.map((l: any) => (
+                <View key={l.id} style={styles.listRow} testID={`list-lesson-${l.id}`}>
+                  <View style={styles.listIcon}><Ionicons name="school" size={16} color={theme.brand} /></View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.listTitle}>{l.title}</Text>
+                    <Text style={styles.listMeta}>Lesson · {l.subject} · ₹{Number(l.price_per_hour || 0).toLocaleString("en-IN")}/hr</Text>
                   </View>
-                ))}
-                {lessons.map((l: any) => (
-                  <View key={l.id} style={styles.listRow} testID={`list-lesson-${l.id}`}>
-                    <View style={styles.listIcon}><Ionicons name="school" size={16} color={theme.brand} /></View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.listTitle}>{l.title}</Text>
-                      <Text style={styles.listMeta}>Lesson · {l.subject} · ₹{Number(l.price_per_hour || 0).toLocaleString("en-IN")}/hr</Text>
-                    </View>
+                  {isOwn && (
                     <Pressable testID={`lesson-del-${l.id}`} onPress={() => del(`/lessons/${l.id}`, "this lesson")} style={styles.delMini}>
                       <Ionicons name="trash-outline" size={14} color={theme.error} />
                     </Pressable>
-                  </View>
-                ))}
-              </View>
-            )}
-          </View>
-        )}
+                  )}
+                </View>
+              ))}
+            </View>
+          )}
+        </View>
 
         {/* Social */}
         {(p.instagram_url || p.youtube_url || p.spotify_url || p.website_url || p.linkedin_url || p.soundcloud_url) && (
@@ -364,28 +369,8 @@ export function ProfileView({
           </View>
         )}
 
-        {/* Settings / Quick links — own only */}
-        {isOwn && (
-          <View style={{ padding: 20, gap: 10, marginTop: 4 }}>
-            <Pressable testID="go-applications" onPress={() => router.push("/(tabs)/applications")} style={styles.rowBtn}>
-              <Ionicons name="briefcase-outline" size={18} color={theme.text} />
-              <Text style={styles.rowBtnTxt}>Applications & gigs</Text>
-              <Ionicons name="chevron-forward" size={18} color={theme.textDim} />
-            </Pressable>
-            <Pressable testID="go-dashboard" onPress={() => router.push("/(tabs)/dashboard")} style={styles.rowBtn}>
-              <Ionicons name="stats-chart-outline" size={18} color={theme.text} />
-              <Text style={styles.rowBtnTxt}>Insights</Text>
-              <Ionicons name="chevron-forward" size={18} color={theme.textDim} />
-            </Pressable>
-            <Pressable testID="logout-btn" onPress={onLogout} style={[styles.rowBtn, { borderColor: theme.error }]}>
-              <Ionicons name="log-out-outline" size={18} color={theme.error} />
-              <Text style={[styles.rowBtnTxt, { color: theme.error }]}>Sign out</Text>
-              <View style={{ width: 18 }} />
-            </Pressable>
-          </View>
-        )}
-
-        {!isOwn && u.created_at && (
+        {/* Joined date — shown identically on both own & public views */}
+        {u.created_at && (
           <Text style={styles.joined}>Joined {formatDate(u.created_at)}</Text>
         )}
       </ScrollView>
