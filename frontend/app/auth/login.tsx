@@ -13,10 +13,14 @@ export default function Login() {
   const [err, setErr] = useState<string | null>(null);
 
   const submit = async () => {
-    setErr(null); setLoading(true);
+    setErr(null);
+    const em = email.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) { setErr("Enter a valid email"); return; }
+    if (!password) { setErr("Enter your password"); return; }
+    setLoading(true);
     try {
-      await login(email.trim(), password);
-      router.replace("/");
+      await login(em, password);
+      // AuthGate will route based on state
     } catch (e: any) { setErr(e.message); }
     finally { setLoading(false); }
   };

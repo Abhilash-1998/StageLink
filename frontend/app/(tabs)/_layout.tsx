@@ -7,7 +7,7 @@ import { theme } from "@/src/theme";
 
 export default function TabsLayout() {
   const { user } = useAuth();
-  const isOrg = user?.role === "organizer";
+  const isOrg = user?.active_role === "organizer";
 
   return (
     <Tabs

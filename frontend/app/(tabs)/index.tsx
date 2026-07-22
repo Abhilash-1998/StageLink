@@ -18,7 +18,7 @@ type Gig = {
 
 export default function Discover() {
   const { user, fetchApi } = useAuth();
-  const isOrg = user?.role === "organizer";
+  const isOrg = user?.active_role === "organizer";
   const [gigs, setGigs] = useState<Gig[]>([]);
   const [recos, setRecos] = useState<Gig[]>([]);
   const [loading, setLoading] = useState(true);

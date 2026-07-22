@@ -1,0 +1,48 @@
+{
+  "summary": "StageLink auth audit — Iteration 1. Backend: 24/24 auth tests pass (register validation, login, brute-force lock @ 6 fails -> 429, refresh valid/invalid/wrong-type, /me valid/missing/malformed, logout, roles single+both, active-role gating). Frontend: 10/10 auth UI flows pass — root redirects unauth users to /auth/login, invalid login shows 'Invalid email or password', seeded musician login lands on Discover tabs, tokens saved in localStorage, session persists on reload, weak password shows client-side validation, strong password creates account -> /auth/role, choosing 'Both' assigns roles=[musician,organizer] -> /auth/onboarding, Sign out clears both tokens and returns to /auth/login. Auth layer looks production-ready. Two minor UX/testID improvements suggested (see action_items).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "app/(tabs)/profile.tsx (Sign out button)", "issue": "Sign-out button has no testID. Automation had to fall back to text matching. Add testID=\"logout-button\".", "testID": "logout-button (missing)", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/auth/onboarding after picking 'Both' role", "issues": ["User picked 'Both' (roles=[musician,organizer], active_role=musician) but onboarding rendered organizer profile fields (Organization name) instead of musician fields matching active_role. Consider rendering onboarding based on active_role, or offering both profile forms sequentially. Not blocking auth audit — flagged for follow-up."]}
+    ],
+    "react_native_issues": [
+      {"component": "Pressable / TouchableOpacity somewhere in tree", "issue": "Console warning during tests: 'props.pointerEvents is deprecated. Use style.pointerEvents'. Non-blocking but should be cleaned up. Likely inside a third-party component or a manual pointerEvents prop."}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_stagelink_api.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/auth_audit.xml"
+  ],
+  "action_items": [
+    "(Minor) Add testID=\"logout-button\" to the Sign-out Pressable in app/(tabs)/profile.tsx for reliable automation.",
+    "(Follow-up, out of auth-audit scope) When user picks 'Both' at role select, the /auth/onboarding screen currently shows organizer fields even though active_role='musician'. Decide product UX: run onboarding for active_role only, or force user to complete both profiles.",
+    "(Cleanup) Track down 'props.pointerEvents is deprecated. Use style.pointerEvents' warning and migrate to style.pointerEvents."
+  ],
+  "critical_code_review_comments": [
+    "Backend auth is well-structured: bcrypt hashing, JWT access(24h)+refresh(30d) with 'type' claim enforced (refresh cannot masquerade as access and vice-versa), lowercase email normalization, EmailStr validation, password policy (>=8, letters+numbers) enforced via Pydantic validator, brute-force lock at 6 fails / 10 min.",
+    "Brute-force protection is in-process memory dict (_login_attempts) — will reset on backend restart and not shared across multiple workers. Acceptable for single-worker dev; consider Redis/Mongo-backed rate limit for production scale.",
+    "JWT_SECRET falls back to hard-coded 'stagelink-dev-secret-change-me' if unset — safe for now (env has it) but consider fail-fast on missing secret in production builds.",
+    "/api/auth/logout is stateless — refresh tokens are NOT invalidated server-side after logout. A stolen refresh_token would remain valid until 30-day expiry. Consider a refresh-token blacklist (jti) collection for true logout invalidation.",
+    "Auth guard in _layout.tsx correctly handles four states (loading/unauthenticated/authenticated-no-roles/authenticated-not-onboarded/fully-authed). Look clean.",
+    "AuthContext token refresh flow uses a shared in-flight promise (refreshing.current) to prevent thundering-herd refresh — good pattern.",
+    "server.py is 846 lines — approaching the 700-line guideline threshold. Consider splitting auth / gigs / applications / AI into separate routers when adding more features."
+  ],
+  "updated_files": [
+    "/app/backend/tests/conftest.py (rewrote to use env BASE_URL and minimal auth-focused fixtures)",
+    "/app/backend/tests/test_stagelink_api.py (rewrote as focused auth-audit suite — 24 tests covering register/login/refresh/me/logout/roles/active-role)"
+  ],
+  "success_rate": {"backend": "100% (24/24)", "frontend": "100% (10/10 auth flows)"},
+  "seed_data_creation": "None. Used seeded ariya.kapoor@stagelink.dev / demo1234 and sunset@stagelink.dev / demo1234 from server.py do_seed(). Tests also register throwaway TEST_* users on the fly.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Auth is verified end-to-end. Focus of this iteration was scoped to auth only per user request. When features like chat/home/discover deepen, the pytest fixtures in conftest.py can be extended with a musician_headers/organizer_headers fixture that logs in the seeded users and yields Bearer tokens (previous iteration had this pattern — restore if needed). Note: the pre-existing test file was outdated (assumed single 'role' string; backend has since moved to roles list + active_role) — replaced entirely.",
+  "rca_of_issue": "N/A — no critical bugs found in auth layer."
+}

@@ -8,7 +8,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function Dashboard() {
   const { user, fetchApi } = useAuth();
-  const isOrg = user?.role === "organizer";
+  const isOrg = user?.active_role === "organizer";
   const [stats, setStats] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 

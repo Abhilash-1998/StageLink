@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator, KeyboardAvoidingView, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { router } from "expo-router";
 import { useAuth } from "@/src/context/AuthContext";
 import { theme } from "@/src/theme";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -11,7 +10,9 @@ const INSTRUMENTS = ["Vocals", "Guitar", "Keyboard", "Violin", "Drums", "Bass", 
 
 export default function Onboarding() {
   const { user, fetchApi, refreshUser } = useAuth();
-  const isMusician = user?.role === "musician";
+  const isMusician = user?.roles?.includes("musician");
+  const isOrganizer = user?.roles?.includes("organizer");
+
   const [city, setCity] = useState("");
   const [bio, setBio] = useState("");
   const [orgName, setOrgName] = useState("");
@@ -27,12 +28,12 @@ export default function Onboarding() {
     setter(arr.includes(v) ? arr.filter(x => x !== v) : [...arr, v]);
 
   const generateBio = async () => {
-    setAiLoading(true);
+    if (!city.trim()) { setErr("Enter your city first"); return; }
+    setErr(null); setAiLoading(true);
     try {
-      // temporarily save minimal profile so LLM has context
       await fetchApi("/profile/musician", {
         method: "POST",
-        body: JSON.stringify({ city: city || "Mumbai", genres, instruments: instr,
+        body: JSON.stringify({ city, genres, instruments: instr,
           experience_years: parseInt(exp || "0"), pricing_per_hour: parseInt(price || "0") }),
       });
       const r: any = await fetchApi("/ai/bio", { method: "POST", body: JSON.stringify({ tone: "professional" }) });
@@ -45,7 +46,8 @@ export default function Onboarding() {
     setErr(null);
     if (!city.trim()) { setErr("Enter your city"); return; }
     if (isMusician && genres.length === 0) { setErr("Select at least one genre"); return; }
-    if (!isMusician && !orgName.trim()) { setErr("Enter organization name"); return; }
+    if (isMusician && instr.length === 0) { setErr("Select at least one instrument"); return; }
+    if (isOrganizer && !orgName.trim()) { setErr("Enter organization name"); return; }
     setSaving(true);
     try {
       if (isMusician) {
@@ -56,14 +58,18 @@ export default function Onboarding() {
             experience_years: parseInt(exp || "0"), pricing_per_hour: parseInt(price || "0"),
           }),
         });
-      } else {
+      }
+      if (isOrganizer) {
         await fetchApi("/profile/organizer", {
           method: "POST",
-          body: JSON.stringify({ org_name: orgName, city, bio }),
+          body: JSON.stringify({ org_name: orgName || (user?.full_name || "My Organization"), city, bio }),
         });
       }
+      // set active role explicitly
+      const active = isMusician ? "musician" : "organizer";
+      await fetchApi("/auth/active-role", { method: "POST", body: JSON.stringify({ active_role: active }) });
       await refreshUser();
-      router.replace("/(tabs)");
+      // AuthGate routes to /(tabs)
     } catch (e: any) { setErr(e.message); }
     finally { setSaving(false); }
   };
@@ -72,10 +78,10 @@ export default function Onboarding() {
     <SafeAreaView style={styles.bg}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={{ padding: 24, paddingBottom: 120 }} keyboardShouldPersistTaps="handled">
-          <Text style={styles.title}>{isMusician ? "Your artist profile" : "Your organization"}</Text>
-          <Text style={styles.sub}>Add a few details to start {isMusician ? "getting booked" : "posting gigs"}.</Text>
+          <Text style={styles.title}>Complete your profile</Text>
+          <Text style={styles.sub}>A few details to get you started on StageLink.</Text>
 
-          {!isMusician && (
+          {isOrganizer && (
             <>
               <Text style={styles.label}>Organization name</Text>
               <TextInput testID="onboard-org-input" style={styles.input} value={orgName} onChangeText={setOrgName} placeholder="Nova Events" placeholderTextColor={theme.textDim} />
@@ -130,7 +136,7 @@ export default function Onboarding() {
           </View>
           <TextInput testID="onboard-bio-input" style={[styles.input, { height: 120, textAlignVertical: "top", paddingTop: 12 }]} value={bio} onChangeText={setBio} multiline placeholder="Tell us your story…" placeholderTextColor={theme.textDim} />
 
-          {err && <Text style={styles.err}>{err}</Text>}
+          {err && <Text style={styles.err} testID="onboard-error">{err}</Text>}
 
           <Pressable testID="onboard-save-btn" onPress={save} disabled={saving} style={({ pressed }) => [styles.cta, pressed && { opacity: 0.8 }]}>
             {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.ctaText}>Continue</Text>}

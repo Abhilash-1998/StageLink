@@ -15,12 +15,15 @@ export default function Signup() {
 
   const submit = async () => {
     setErr(null);
+    const em = email.trim().toLowerCase();
     if (name.trim().length < 2) { setErr("Enter your full name"); return; }
-    if (password.length < 6) { setErr("Password must be 6+ chars"); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) { setErr("Enter a valid email"); return; }
+    if (password.length < 8) { setErr("Password must be at least 8 characters"); return; }
+    if (!/[A-Za-z]/.test(password) || !/\d/.test(password)) { setErr("Password must contain letters and numbers"); return; }
     setLoading(true);
     try {
-      await register(email.trim(), password, name.trim());
-      router.replace("/auth/role");
+      await register(em, password, name.trim());
+      // AuthGate routes to /auth/role
     } catch (e: any) { setErr(e.message); }
     finally { setLoading(false); }
   };
@@ -37,7 +40,7 @@ export default function Signup() {
           <Text style={styles.label}>Email</Text>
           <TextInput testID="signup-email-input" style={styles.input} value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" placeholder="you@studio.com" placeholderTextColor={theme.textDim} />
           <Text style={styles.label}>Password</Text>
-          <TextInput testID="signup-password-input" style={styles.input} value={password} onChangeText={setPassword} secureTextEntry placeholder="6+ characters" placeholderTextColor={theme.textDim} />
+          <TextInput testID="signup-password-input" style={styles.input} value={password} onChangeText={setPassword} secureTextEntry placeholder="8+ chars, letters and numbers" placeholderTextColor={theme.textDim} />
           {err && <Text style={styles.err} testID="signup-error">{err}</Text>}
 
           <Pressable testID="signup-submit-button" onPress={submit} disabled={loading} style={({ pressed }) => [styles.cta, pressed && { opacity: 0.8 }]}>

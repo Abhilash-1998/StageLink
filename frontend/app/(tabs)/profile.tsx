@@ -14,14 +14,14 @@ export default function ProfileTab() {
 
   useEffect(() => {
     if (!user) return;
-    const url = user.role === "musician" ? `/profile/musician/${user.id}` : `/profile/organizer/${user.id}`;
+    const url = user.active_role === "musician" ? `/profile/musician/${user.id}` : `/profile/organizer/${user.id}`;
     fetchApi(url).then(setProfile).catch(() => {}).finally(() => setLoading(false));
   }, [fetchApi, user]);
 
   if (loading) return <SafeAreaView style={styles.bg}><View style={styles.center}><ActivityIndicator color={theme.brand} /></View></SafeAreaView>;
 
   const p = profile?.profile || {};
-  const isMusician = user?.role === "musician";
+  const isMusician = user?.active_role === "musician";
   const initials = user?.full_name?.split(" ").slice(0, 2).map(n => n[0]).join("").toUpperCase();
 
   return (
@@ -86,7 +86,7 @@ export default function ProfileTab() {
             <Text style={styles.rowBtnTxt}>Edit profile</Text>
             <Ionicons name="chevron-forward" size={18} color={theme.textDim} />
           </Pressable>
-          <Pressable testID="logout-btn" onPress={async () => { await logout(); router.replace("/auth/login"); }} style={[styles.rowBtn, { borderColor: theme.error }]}>
+          <Pressable testID="logout-btn" onPress={async () => { await logout(); }} style={[styles.rowBtn, { borderColor: theme.error }]}>
             <Ionicons name="log-out-outline" size={18} color={theme.error} />
             <Text style={[styles.rowBtnTxt, { color: theme.error }]}>Sign out</Text>
             <View style={{ width: 18 }} />

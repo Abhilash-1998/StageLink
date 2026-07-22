@@ -11,7 +11,7 @@ import * as Haptics from "expo-haptics";
 export default function GigDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { user, fetchApi } = useAuth();
-  const isMusician = user?.role === "musician";
+  const isMusician = user?.active_role === "musician";
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [applying, setApplying] = useState(false);

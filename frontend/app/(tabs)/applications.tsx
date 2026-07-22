@@ -8,7 +8,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function Applications() {
   const { user, fetchApi } = useAuth();
-  const isOrg = user?.role === "organizer";
+  const isOrg = user?.active_role === "organizer";
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);

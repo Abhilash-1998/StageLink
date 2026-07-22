@@ -1,9 +1,9 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, status, Header
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
-import os, logging, uuid, jwt, bcrypt, asyncio
+import os, logging, uuid, jwt, bcrypt
 from pathlib import Path
 from pydantic import BaseModel, Field, EmailStr
 from typing import List, Optional, Literal
@@ -25,30 +25,63 @@ app = FastAPI(title="StageLink API")
 api = APIRouter(prefix="/api")
 security = HTTPBearer(auto_error=False)
 
-# ----------------- Models -----------------
+# ================== Models ==================
+Role = Literal['musician', 'organizer']
+
+import re
+def _validate_password(p: str) -> str:
+    if not isinstance(p, str) or len(p) < 8:
+        raise ValueError("Password must be at least 8 characters")
+    if not re.search(r'[A-Za-z]', p) or not re.search(r'\d', p):
+        raise ValueError("Password must contain letters and numbers")
+    return p
+
+from pydantic import field_validator
+
 class RegisterIn(BaseModel):
     email: EmailStr
     password: str
     full_name: str
 
+    @field_validator('password')
+    @classmethod
+    def _v_pw(cls, v): return _validate_password(v)
+
+    @field_validator('full_name')
+    @classmethod
+    def _v_name(cls, v):
+        v = (v or '').strip()
+        if len(v) < 2: raise ValueError("Full name is too short")
+        return v
+
 class LoginIn(BaseModel):
     email: EmailStr
     password: str
+
+class RefreshIn(BaseModel):
+    refresh_token: str
 
 class UserOut(BaseModel):
     id: str
     email: EmailStr
     full_name: str
-    role: Optional[Literal['musician', 'organizer']] = None
+    roles: List[str] = []
+    active_role: Optional[str] = None
     onboarded: bool = False
     avatar_url: Optional[str] = None
+    verified: bool = False
+    premium: bool = False
 
 class TokenOut(BaseModel):
     access_token: str
+    refresh_token: str
     user: UserOut
 
-class RoleIn(BaseModel):
-    role: Literal['musician', 'organizer']
+class RolesIn(BaseModel):
+    roles: List[Role]  # musician, organizer, or both
+
+class ActiveRoleIn(BaseModel):
+    active_role: Role
 
 class MusicianProfileIn(BaseModel):
     bio: Optional[str] = ""
@@ -62,6 +95,7 @@ class MusicianProfileIn(BaseModel):
     youtube_url: Optional[str] = None
     instagram_url: Optional[str] = None
     avatar_url: Optional[str] = None
+    cover_url: Optional[str] = None
 
 class OrganizerProfileIn(BaseModel):
     org_name: str
@@ -72,8 +106,8 @@ class OrganizerProfileIn(BaseModel):
 class GigCreate(BaseModel):
     title: str
     city: str
-    date: str  # ISO
-    event_type: str  # wedding/corporate/club/festival/private
+    date: str
+    event_type: str
     genre: str
     instrument_needed: str
     budget: int
@@ -89,6 +123,11 @@ class ReviewIn(BaseModel):
     rating: int
     comment: str
 
+class MessageIn(BaseModel):
+    thread_id: Optional[str] = None
+    to_user_id: Optional[str] = None
+    text: str
+
 class AIBioIn(BaseModel):
     tone: str = "professional"
 
@@ -98,10 +137,7 @@ class AIPricingIn(BaseModel):
     genres: List[str]
     instruments: List[str]
 
-class AIRecoIn(BaseModel):
-    limit: int = 5
-
-# ------------- Helpers -------------
+# ================== Helpers ==================
 def now_iso():
     return datetime.now(timezone.utc).isoformat()
 
@@ -109,67 +145,142 @@ def hash_pw(p: str) -> str:
     return bcrypt.hashpw(p.encode(), bcrypt.gensalt()).decode()
 
 def verify_pw(p: str, h: str) -> bool:
-    try:
-        return bcrypt.checkpw(p.encode(), h.encode())
-    except Exception:
-        return False
+    try: return bcrypt.checkpw(p.encode(), h.encode())
+    except: return False
 
-def make_token(uid: str) -> str:
-    payload = {'sub': uid, 'exp': datetime.now(timezone.utc) + timedelta(days=30)}
-    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGO)
+def make_access_token(uid: str) -> str:
+    return jwt.encode({'sub': uid, 'type': 'access',
+                       'exp': datetime.now(timezone.utc) + timedelta(hours=24)},
+                      JWT_SECRET, algorithm=JWT_ALGO)
+
+def make_refresh_token(uid: str) -> str:
+    return jwt.encode({'sub': uid, 'type': 'refresh', 'jti': str(uuid.uuid4()),
+                       'exp': datetime.now(timezone.utc) + timedelta(days=30)},
+                      JWT_SECRET, algorithm=JWT_ALGO)
+
+def make_token_pair(uid: str) -> dict:
+    return {'access_token': make_access_token(uid),
+            'refresh_token': make_refresh_token(uid)}
+
+# Simple in-memory brute-force protection
+_login_attempts: dict = {}
+def _check_bruteforce(email: str) -> None:
+    now = datetime.now(timezone.utc)
+    entry = _login_attempts.get(email, {'count': 0, 'lock_until': None})
+    if entry['lock_until'] and now < entry['lock_until']:
+        raise HTTPException(429, "Too many attempts. Try again in a few minutes.")
+    if entry['lock_until'] and now >= entry['lock_until']:
+        _login_attempts[email] = {'count': 0, 'lock_until': None}
+
+def _record_login_fail(email: str) -> None:
+    entry = _login_attempts.get(email, {'count': 0, 'lock_until': None})
+    entry['count'] += 1
+    if entry['count'] >= 6:
+        entry['lock_until'] = datetime.now(timezone.utc) + timedelta(minutes=10)
+    _login_attempts[email] = entry
+
+def _clear_login_fail(email: str) -> None:
+    _login_attempts.pop(email, None)
 
 async def get_user(cred: HTTPAuthorizationCredentials = Depends(security)):
     if not cred:
-        raise HTTPException(status_code=401, detail="Missing token")
+        raise HTTPException(401, "Missing token")
     try:
         payload = jwt.decode(cred.credentials, JWT_SECRET, algorithms=[JWT_ALGO])
+        if payload.get('type') and payload.get('type') != 'access':
+            raise HTTPException(401, "Invalid token type")
         uid = payload['sub']
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(401, "Token expired")
+    except HTTPException:
+        raise
     except Exception:
-        raise HTTPException(status_code=401, detail="Invalid token")
+        raise HTTPException(401, "Invalid token")
     u = await db.users.find_one({'id': uid}, {'_id': 0, 'password_hash': 0})
-    if not u:
-        raise HTTPException(status_code=401, detail="User not found")
+    if not u: raise HTTPException(401, "User not found")
     return u
 
 def user_public(u: dict) -> dict:
     return {
         'id': u['id'], 'email': u['email'], 'full_name': u['full_name'],
-        'role': u.get('role'), 'onboarded': u.get('onboarded', False),
-        'avatar_url': u.get('avatar_url'),
+        'roles': u.get('roles', []), 'active_role': u.get('active_role'),
+        'onboarded': u.get('onboarded', False), 'avatar_url': u.get('avatar_url'),
+        'verified': u.get('verified', False), 'premium': u.get('premium', False),
     }
 
-# ------------- Auth -------------
+# ================== Auth ==================
 @api.post("/auth/register", response_model=TokenOut)
 async def register(inp: RegisterIn):
-    if await db.users.find_one({'email': inp.email}):
-        raise HTTPException(status_code=400, detail="Email already registered")
+    email = inp.email.lower().strip()
+    if await db.users.find_one({'email': email}):
+        raise HTTPException(400, "Email already registered")
     uid = str(uuid.uuid4())
-    doc = {
-        'id': uid, 'email': inp.email, 'full_name': inp.full_name,
-        'password_hash': hash_pw(inp.password), 'role': None,
-        'onboarded': False, 'created_at': now_iso(), 'avatar_url': None,
-    }
+    doc = {'id': uid, 'email': email, 'full_name': inp.full_name,
+           'password_hash': hash_pw(inp.password), 'roles': [], 'active_role': None,
+           'onboarded': False, 'created_at': now_iso(), 'avatar_url': None,
+           'verified': False, 'premium': False}
     await db.users.insert_one(doc)
-    return {'access_token': make_token(uid), 'user': user_public(doc)}
+    return {**make_token_pair(uid), 'user': user_public(doc)}
 
 @api.post("/auth/login", response_model=TokenOut)
 async def login(inp: LoginIn):
-    u = await db.users.find_one({'email': inp.email})
+    email = inp.email.lower().strip()
+    _check_bruteforce(email)
+    u = await db.users.find_one({'email': email})
     if not u or not verify_pw(inp.password, u['password_hash']):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-    return {'access_token': make_token(u['id']), 'user': user_public(u)}
+        _record_login_fail(email)
+        raise HTTPException(401, "Invalid email or password")
+    _clear_login_fail(email)
+    return {**make_token_pair(u['id']), 'user': user_public(u)}
+
+@api.post("/auth/refresh")
+async def refresh(inp: RefreshIn):
+    try:
+        payload = jwt.decode(inp.refresh_token, JWT_SECRET, algorithms=[JWT_ALGO])
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(401, "Refresh token expired")
+    except Exception:
+        raise HTTPException(401, "Invalid refresh token")
+    if payload.get('type') != 'refresh':
+        raise HTTPException(401, "Invalid token type")
+    uid = payload.get('sub')
+    u = await db.users.find_one({'id': uid}, {'_id': 0, 'password_hash': 0})
+    if not u:
+        raise HTTPException(401, "User not found")
+    return {**make_token_pair(uid), 'user': user_public(u)}
+
+@api.post("/auth/logout")
+async def logout(u=Depends(get_user)):
+    # Stateless JWT — client is responsible for discarding tokens.
+    return {'ok': True}
 
 @api.get("/auth/me", response_model=UserOut)
 async def me(u=Depends(get_user)):
     return user_public(u)
 
-@api.post("/auth/role", response_model=UserOut)
-async def set_role(inp: RoleIn, u=Depends(get_user)):
-    await db.users.update_one({'id': u['id']}, {'$set': {'role': inp.role}})
-    u['role'] = inp.role
+@api.post("/auth/roles", response_model=UserOut)
+async def set_roles(inp: RolesIn, u=Depends(get_user)):
+    roles = list(dict.fromkeys(inp.roles))  # dedupe preserve order
+    if not roles:
+        raise HTTPException(400, "Pick at least one role")
+    active = u.get('active_role')
+    if active not in roles:
+        active = roles[0]
+    await db.users.update_one({'id': u['id']}, {'$set': {'roles': roles, 'active_role': active}})
+    u['roles'] = roles; u['active_role'] = active
     return user_public(u)
 
-# ------------- Profiles -------------
+@api.post("/auth/active-role", response_model=UserOut)
+async def set_active_role(inp: ActiveRoleIn, u=Depends(get_user)):
+    if inp.active_role not in u.get('roles', []):
+        raise HTTPException(400, "Role not enabled on this account")
+    if not u.get('onboarded'):
+        raise HTTPException(400, "Complete profile before switching roles")
+    await db.users.update_one({'id': u['id']}, {'$set': {'active_role': inp.active_role}})
+    u['active_role'] = inp.active_role
+    return user_public(u)
+
+# ================== Profiles ==================
 @api.post("/profile/musician")
 async def upsert_musician(inp: MusicianProfileIn, u=Depends(get_user)):
     doc = inp.dict()
@@ -177,8 +288,7 @@ async def upsert_musician(inp: MusicianProfileIn, u=Depends(get_user)):
     doc['updated_at'] = now_iso()
     await db.musicians.update_one({'user_id': u['id']}, {'$set': doc}, upsert=True)
     updates = {'onboarded': True}
-    if inp.avatar_url:
-        updates['avatar_url'] = inp.avatar_url
+    if inp.avatar_url: updates['avatar_url'] = inp.avatar_url
     await db.users.update_one({'id': u['id']}, {'$set': updates})
     return {'ok': True}
 
@@ -189,53 +299,73 @@ async def upsert_organizer(inp: OrganizerProfileIn, u=Depends(get_user)):
     doc['updated_at'] = now_iso()
     await db.organizers.update_one({'user_id': u['id']}, {'$set': doc}, upsert=True)
     updates = {'onboarded': True}
-    if inp.avatar_url:
-        updates['avatar_url'] = inp.avatar_url
+    if inp.avatar_url: updates['avatar_url'] = inp.avatar_url
     await db.users.update_one({'id': u['id']}, {'$set': updates})
     return {'ok': True}
 
 @api.get("/profile/musician/{user_id}")
 async def get_musician(user_id: str):
     m = await db.musicians.find_one({'user_id': user_id}, {'_id': 0})
-    if not m:
-        raise HTTPException(status_code=404, detail="Not found")
+    if not m: raise HTTPException(404, "Not found")
     u = await db.users.find_one({'id': user_id}, {'_id': 0, 'password_hash': 0})
-    # aggregate reviews
     reviews = await db.reviews.find({'target_user_id': user_id}, {'_id': 0}).to_list(50)
     rating = round(sum(r['rating'] for r in reviews) / len(reviews), 1) if reviews else 0
     reliability = min(100, 60 + len(reviews) * 4)
+    followers = await db.follows.count_documents({'target_user_id': user_id})
     return {'user': user_public(u) if u else None, 'profile': m, 'rating': rating,
-            'review_count': len(reviews), 'reliability': reliability, 'reviews': reviews[:10]}
+            'review_count': len(reviews), 'reliability': reliability, 'followers': followers,
+            'reviews': reviews[:10]}
 
 @api.get("/profile/organizer/{user_id}")
 async def get_organizer(user_id: str):
     o = await db.organizers.find_one({'user_id': user_id}, {'_id': 0})
-    if not o:
-        raise HTTPException(status_code=404, detail="Not found")
+    if not o: raise HTTPException(404, "Not found")
     u = await db.users.find_one({'id': user_id}, {'_id': 0, 'password_hash': 0})
-    return {'user': user_public(u) if u else None, 'profile': o}
+    gigs_count = await db.gigs.count_documents({'organizer_id': user_id})
+    return {'user': user_public(u) if u else None, 'profile': o, 'gigs_count': gigs_count}
 
-# ------------- Musicians directory -------------
+# ================== Directory / Discover ==================
 @api.get("/musicians")
 async def list_musicians(city: Optional[str] = None, genre: Optional[str] = None,
-                         instrument: Optional[str] = None, limit: int = 50):
-    q = {}
-    if city: q['city'] = {'$regex': f'^{city}$', '$options': 'i'}
-    if genre: q['genres'] = {'$in': [genre]}
-    if instrument: q['instruments'] = {'$in': [instrument]}
-    docs = await db.musicians.find(q, {'_id': 0}).limit(limit).to_list(limit)
+                         instrument: Optional[str] = None, q: Optional[str] = None,
+                         featured: Optional[bool] = None, limit: int = 50):
+    query = {}
+    if city and city != 'All': query['city'] = {'$regex': f'^{city}$', '$options': 'i'}
+    if genre and genre != 'All': query['genres'] = {'$in': [genre]}
+    if instrument and instrument != 'All': query['instruments'] = {'$in': [instrument]}
+    docs = await db.musicians.find(query, {'_id': 0}).limit(limit).to_list(limit)
     out = []
     for m in docs:
         u = await db.users.find_one({'id': m['user_id']}, {'_id': 0, 'password_hash': 0})
         if not u: continue
+        if q and q.lower() not in (u['full_name'] + ' ' + ' '.join(m.get('genres', []))).lower():
+            continue
         out.append({'user': user_public(u), 'profile': m})
     return out
 
-# ------------- Gigs -------------
+@api.get("/organizers")
+async def list_organizers(q: Optional[str] = None, limit: int = 50):
+    docs = await db.organizers.find({}, {'_id': 0}).limit(limit).to_list(limit)
+    out = []
+    for o in docs:
+        u = await db.users.find_one({'id': o['user_id']}, {'_id': 0, 'password_hash': 0})
+        if not u: continue
+        if q and q.lower() not in (u['full_name'] + ' ' + o.get('org_name', '')).lower(): continue
+        out.append({'user': user_public(u), 'profile': o})
+    return out
+
+@api.get("/venues")
+async def list_venues(city: Optional[str] = None, q: Optional[str] = None, limit: int = 50):
+    query = {}
+    if city and city != 'All': query['city'] = {'$regex': city, '$options': 'i'}
+    if q: query['name'] = {'$regex': q, '$options': 'i'}
+    return await db.venues.find(query, {'_id': 0}).limit(limit).to_list(limit)
+
+# ================== Gigs ==================
 @api.post("/gigs")
 async def create_gig(inp: GigCreate, u=Depends(get_user)):
-    if u.get('role') != 'organizer':
-        raise HTTPException(status_code=403, detail="Only organizers can create gigs")
+    if 'organizer' not in u.get('roles', []):
+        raise HTTPException(403, "Only organizers can create gigs")
     gid = str(uuid.uuid4())
     doc = inp.dict()
     doc.update({'id': gid, 'organizer_id': u['id'], 'status': 'open',
@@ -250,24 +380,21 @@ async def list_gigs(city: Optional[str] = None, genre: Optional[str] = None,
                     min_budget: Optional[int] = None, max_budget: Optional[int] = None,
                     q: Optional[str] = None, limit: int = 100):
     query = {'status': 'open'}
-    if city: query['city'] = {'$regex': city, '$options': 'i'}
-    if genre: query['genre'] = genre
-    if instrument: query['instrument_needed'] = instrument
-    if event_type: query['event_type'] = event_type
+    if city and city != 'All': query['city'] = {'$regex': city, '$options': 'i'}
+    if genre and genre != 'All': query['genre'] = genre
+    if instrument and instrument != 'All': query['instrument_needed'] = instrument
+    if event_type and event_type != 'All': query['event_type'] = event_type
     if min_budget is not None: query['budget'] = {'$gte': min_budget}
-    if max_budget is not None:
-        query.setdefault('budget', {})['$lte'] = max_budget
+    if max_budget is not None: query.setdefault('budget', {})['$lte'] = max_budget
     if q:
         query['$or'] = [{'title': {'$regex': q, '$options': 'i'}},
                         {'description': {'$regex': q, '$options': 'i'}}]
-    docs = await db.gigs.find(query, {'_id': 0}).sort('featured', -1).limit(limit).to_list(limit)
-    return docs
+    return await db.gigs.find(query, {'_id': 0}).sort('featured', -1).limit(limit).to_list(limit)
 
 @api.get("/gigs/{gid}")
 async def get_gig(gid: str):
     g = await db.gigs.find_one({'id': gid}, {'_id': 0})
-    if not g:
-        raise HTTPException(status_code=404, detail="Not found")
+    if not g: raise HTTPException(404, "Not found")
     org_user = await db.users.find_one({'id': g['organizer_id']}, {'_id': 0, 'password_hash': 0})
     org_profile = await db.organizers.find_one({'user_id': g['organizer_id']}, {'_id': 0})
     apps_count = await db.applications.count_documents({'gig_id': gid})
@@ -281,17 +408,15 @@ async def my_gigs(u=Depends(get_user)):
         g['applications_count'] = await db.applications.count_documents({'gig_id': g['id']})
     return docs
 
-# ------------- Applications -------------
+# ================== Applications ==================
 @api.post("/applications")
 async def apply(inp: ApplicationIn, u=Depends(get_user)):
-    if u.get('role') != 'musician':
-        raise HTTPException(status_code=403, detail="Only musicians can apply")
+    if 'musician' not in u.get('roles', []):
+        raise HTTPException(403, "Only musicians can apply")
     g = await db.gigs.find_one({'id': inp.gig_id})
-    if not g:
-        raise HTTPException(status_code=404, detail="Gig not found")
-    exists = await db.applications.find_one({'gig_id': inp.gig_id, 'musician_id': u['id']})
-    if exists:
-        raise HTTPException(status_code=400, detail="Already applied")
+    if not g: raise HTTPException(404, "Gig not found")
+    if await db.applications.find_one({'gig_id': inp.gig_id, 'musician_id': u['id']}):
+        raise HTTPException(400, "Already applied")
     aid = str(uuid.uuid4())
     doc = {'id': aid, 'gig_id': inp.gig_id, 'musician_id': u['id'],
            'message': inp.message, 'status': 'pending', 'created_at': now_iso()}
@@ -309,20 +434,19 @@ async def my_apps(u=Depends(get_user)):
     return out
 
 @api.get("/applications/gig/{gid}")
-async def gig_applications(gid: str, u=Depends(get_user)):
+async def gig_apps(gid: str, u=Depends(get_user)):
     g = await db.gigs.find_one({'id': gid})
     if not g or g['organizer_id'] != u['id']:
-        raise HTTPException(status_code=403, detail="Not allowed")
+        raise HTTPException(403, "Not allowed")
     apps = await db.applications.find({'gig_id': gid}, {'_id': 0}).to_list(200)
     out = []
     for a in apps:
         mu = await db.users.find_one({'id': a['musician_id']}, {'_id': 0, 'password_hash': 0})
         mp = await db.musicians.find_one({'user_id': a['musician_id']}, {'_id': 0})
-        out.append({'application': a, 'musician_user': user_public(mu) if mu else None,
-                    'musician_profile': mp})
+        out.append({'application': a, 'musician_user': user_public(mu) if mu else None, 'musician_profile': mp})
     return out
 
-# ------------- Reviews -------------
+# ================== Reviews ==================
 @api.post("/reviews")
 async def create_review(inp: ReviewIn, u=Depends(get_user)):
     doc = {'id': str(uuid.uuid4()), 'author_id': u['id'], 'target_user_id': inp.target_user_id,
@@ -332,10 +456,51 @@ async def create_review(inp: ReviewIn, u=Depends(get_user)):
     doc.pop('_id', None)
     return doc
 
-# ------------- AI -------------
+# ================== Messages ==================
+def thread_key(a: str, b: str) -> str:
+    return '::'.join(sorted([a, b]))
+
+@api.get("/threads")
+async def threads(u=Depends(get_user)):
+    msgs = await db.messages.find({'$or': [{'from_id': u['id']}, {'to_id': u['id']}]}, {'_id': 0}).sort('created_at', -1).to_list(500)
+    groups: dict = {}
+    for m in msgs:
+        other = m['to_id'] if m['from_id'] == u['id'] else m['from_id']
+        if other not in groups: groups[other] = m
+    out = []
+    for other, last in groups.items():
+        ou = await db.users.find_one({'id': other}, {'_id': 0, 'password_hash': 0})
+        if not ou: continue
+        unread = await db.messages.count_documents({'from_id': other, 'to_id': u['id'], 'read': False})
+        out.append({'user': user_public(ou), 'last_message': last, 'unread': unread})
+    out.sort(key=lambda t: t['last_message']['created_at'], reverse=True)
+    return out
+
+@api.get("/threads/{other_id}")
+async def thread_detail(other_id: str, u=Depends(get_user)):
+    msgs = await db.messages.find({
+        '$or': [{'from_id': u['id'], 'to_id': other_id},
+                {'from_id': other_id, 'to_id': u['id']}]
+    }, {'_id': 0}).sort('created_at', 1).to_list(500)
+    await db.messages.update_many({'from_id': other_id, 'to_id': u['id'], 'read': False},
+                                  {'$set': {'read': True}})
+    ou = await db.users.find_one({'id': other_id}, {'_id': 0, 'password_hash': 0})
+    return {'other': user_public(ou) if ou else None, 'messages': msgs}
+
+@api.post("/messages")
+async def send_msg(inp: MessageIn, u=Depends(get_user)):
+    if not inp.to_user_id: raise HTTPException(400, "to_user_id required")
+    if not inp.text.strip(): raise HTTPException(400, "Empty message")
+    m = {'id': str(uuid.uuid4()), 'from_id': u['id'], 'to_id': inp.to_user_id,
+         'text': inp.text.strip(), 'read': False, 'created_at': now_iso()}
+    await db.messages.insert_one(m)
+    m.pop('_id', None)
+    return m
+
+# ================== AI ==================
 async def call_llm(system: str, prompt: str) -> str:
     if not EMERGENT_LLM_KEY:
-        return "AI unavailable. Please add EMERGENT_LLM_KEY to backend .env."
+        return "AI unavailable. Add EMERGENT_LLM_KEY to backend .env."
     try:
         from emergentintegrations.llm.chat import LlmChat, UserMessage
         chat = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=str(uuid.uuid4()),
@@ -355,63 +520,128 @@ async def ai_bio(inp: AIBioIn, u=Depends(get_user)):
               f"Instruments: {', '.join(m.get('instruments',[]) or ['vocals'])}. "
               f"Experience: {m.get('experience_years',0)} years. "
               "Write in first person, natural and confident. No emojis. No hashtags.")
-    text = await call_llm("You are a music industry copywriter crafting concise, elegant artist bios.", prompt)
+    text = await call_llm("You are a music industry copywriter crafting elegant artist bios.", prompt)
     return {'bio': text}
 
 @api.post("/ai/pricing")
 async def ai_pricing(inp: AIPricingIn, u=Depends(get_user)):
-    prompt = (f"Suggest an hourly pricing range in INR for a live musician in {inp.city} "
-              f"with {inp.experience_years} years experience, genres {inp.genres}, instruments {inp.instruments}. "
-              "Respond strictly as JSON with keys min, max, recommended, reasoning (1 short sentence). "
-              "Values are integers in INR per hour.")
-    text = await call_llm("You are a live music market analyst for India. Reply ONLY valid minified JSON.", prompt)
+    prompt = (f"Suggest hourly pricing (INR) for a live musician in {inp.city}, "
+              f"{inp.experience_years} yrs exp, genres {inp.genres}, instruments {inp.instruments}. "
+              "Reply strict minified JSON: {min:int,max:int,recommended:int,reasoning:string}. INR/hour.")
+    text = await call_llm("You are a live music market analyst for India. Return ONLY minified JSON.", prompt)
     import json as _json, re
     try:
-        # strip markdown fences
         cleaned = re.sub(r'^```(?:json)?|```$', '', text.strip(), flags=re.MULTILINE).strip()
         data = _json.loads(cleaned)
-    except Exception:
+    except:
         data = {'min': 2000, 'max': 8000, 'recommended': 4500,
-                'reasoning': text[:120] or 'Estimate based on typical live gig rates.'}
+                'reasoning': 'Estimate based on typical live-gig rates.'}
     return data
 
 @api.post("/ai/recommendations")
-async def ai_recos(inp: AIRecoIn, u=Depends(get_user)):
+async def ai_recos(u=Depends(get_user)):
     m = await db.musicians.find_one({'user_id': u['id']}) or {}
     q = {'status': 'open'}
     if m.get('city'): q['city'] = m['city']
     gigs = await db.gigs.find(q, {'_id': 0}).limit(50).to_list(50)
     if not gigs:
         gigs = await db.gigs.find({'status': 'open'}, {'_id': 0}).limit(50).to_list(50)
-    # Simple scoring
     scored = []
     for g in gigs:
         score = 0
         if g['genre'] in (m.get('genres') or []): score += 3
         if g['instrument_needed'] in (m.get('instruments') or []): score += 3
         if g['city'].lower() == (m.get('city') or '').lower(): score += 2
-        exp = m.get('experience_years', 0)
-        if g['budget'] >= 3000 + exp * 300: score += 1
         scored.append((score, g))
     scored.sort(key=lambda x: -x[0])
-    return [g for _, g in scored[:inp.limit]]
+    return [g for _, g in scored[:5]]
 
 @api.post("/ai/contract/{gig_id}")
 async def ai_contract(gig_id: str, u=Depends(get_user)):
     g = await db.gigs.find_one({'id': gig_id}, {'_id': 0})
     if not g: raise HTTPException(404, "Gig not found")
-    prompt = (f"Draft a concise performance contract (bullet list, 8-10 clauses) between "
-              f"organizer for the event '{g['title']}' on {g['date']} in {g['city']} "
-              f"({g['event_type']}) with budget INR {g['budget']}, and the performing artist. "
-              "Cover: schedule, payment (50% advance, 50% post-event), equipment, cancellation, "
-              "recording rights, force majeure, hospitality, dress code, arrival time. Plain text, no markdown.")
-    text = await call_llm("You are a live-events lawyer drafting fair, artist-friendly performance contracts.", prompt)
+    prompt = (f"Draft a concise performance contract (bullet list, 8-10 clauses) for '{g['title']}' "
+              f"on {g['date']} in {g['city']} ({g['event_type']}) budget INR {g['budget']}. "
+              "Cover: schedule, payment (50/50), equipment, cancellation, recording rights, "
+              "force majeure, hospitality, dress code. Plain text, no markdown.")
+    text = await call_llm("You are a live-events lawyer drafting fair, artist-friendly contracts.", prompt)
     return {'contract': text}
 
-# ------------- Stats / Dashboard -------------
+@api.post("/ai/profile-review")
+async def ai_profile_review(u=Depends(get_user)):
+    m = await db.musicians.find_one({'user_id': u['id']}, {'_id': 0}) or {}
+    fields = ['bio', 'city', 'genres', 'instruments', 'experience_years', 'pricing_per_hour', 'demo_video_url']
+    missing = [f for f in fields if not m.get(f)]
+    score = int(((len(fields) - len(missing)) / len(fields)) * 100)
+    prompt = (f"Give 3 short career tips (1 line each) for a musician: {m.get('city','')}, "
+              f"{m.get('experience_years',0)} yrs, genres {m.get('genres', [])}. "
+              "Return plain text numbered list.")
+    tips = await call_llm("You are a friendly career coach for musicians. Be brief and concrete.", prompt)
+    return {'completion_score': score, 'missing_fields': missing, 'tips': tips}
+
+# ================== Home / Dashboard ==================
+@api.get("/home")
+async def home(u=Depends(get_user)):
+    role = u.get('active_role')
+    if role == 'organizer':
+        my_gigs_ = await db.gigs.find({'organizer_id': u['id']}, {'_id': 0}).sort('created_at', -1).to_list(20)
+        total_apps = 0
+        for g in my_gigs_:
+            g['applications_count'] = await db.applications.count_documents({'gig_id': g['id']})
+            total_apps += g['applications_count']
+        # top musicians for hire
+        top = await db.musicians.find({}, {'_id': 0}).limit(6).to_list(6)
+        featured_musicians = []
+        for m in top:
+            ux = await db.users.find_one({'id': m['user_id']}, {'_id': 0, 'password_hash': 0})
+            if ux: featured_musicians.append({'user': user_public(ux), 'profile': m})
+        return {
+            'role': 'organizer',
+            'metrics': {'active_gigs': len([g for g in my_gigs_ if g['status'] == 'open']),
+                        'total_gigs': len(my_gigs_), 'total_applications': total_apps},
+            'my_gigs': my_gigs_[:5],
+            'featured_musicians': featured_musicians,
+        }
+    else:
+        m = await db.musicians.find_one({'user_id': u['id']}, {'_id': 0}) or {}
+        # recommendations
+        q = {'status': 'open'}
+        if m.get('city'): q['city'] = m['city']
+        gigs = await db.gigs.find(q, {'_id': 0}).limit(30).to_list(30)
+        if not gigs:
+            gigs = await db.gigs.find({'status': 'open'}, {'_id': 0}).limit(30).to_list(30)
+        scored = []
+        for g in gigs:
+            score = 0
+            if g['genre'] in (m.get('genres') or []): score += 3
+            if g['instrument_needed'] in (m.get('instruments') or []): score += 3
+            scored.append((score, g))
+        scored.sort(key=lambda x: -x[0])
+        recos = [g for _, g in scored[:6]]
+        # upcoming bookings (accepted apps)
+        apps = await db.applications.find({'musician_id': u['id'], 'status': 'accepted'}, {'_id': 0}).to_list(20)
+        upcoming = []
+        for a in apps:
+            g = await db.gigs.find_one({'id': a['gig_id']}, {'_id': 0})
+            if g: upcoming.append(g)
+        reviews = await db.reviews.find({'target_user_id': u['id']}).to_list(200)
+        rating = round(sum(r['rating'] for r in reviews) / len(reviews), 1) if reviews else 0
+        # profile completion
+        fields = ['bio', 'city', 'genres', 'instruments', 'experience_years', 'pricing_per_hour']
+        completion = int(sum(1 for f in fields if m.get(f)) / len(fields) * 100)
+        return {
+            'role': 'musician',
+            'metrics': {'applications': await db.applications.count_documents({'musician_id': u['id']}),
+                        'rating': rating, 'followers': await db.follows.count_documents({'target_user_id': u['id']}),
+                        'profile_completion': completion},
+            'recommendations': recos,
+            'upcoming': upcoming,
+            'trending_venues': await db.venues.find({}, {'_id': 0}).limit(5).to_list(5),
+        }
+
 @api.get("/dashboard")
 async def dashboard(u=Depends(get_user)):
-    if u.get('role') == 'organizer':
+    if u.get('active_role') == 'organizer':
         gigs = await db.gigs.find({'organizer_id': u['id']}, {'_id': 0}).to_list(500)
         total_apps = 0
         for g in gigs:
@@ -419,23 +649,43 @@ async def dashboard(u=Depends(get_user)):
         return {'active_gigs': len([g for g in gigs if g['status'] == 'open']),
                 'total_gigs': len(gigs), 'total_applications': total_apps,
                 'total_budget': sum(g['budget'] for g in gigs)}
-    else:
-        apps = await db.applications.find({'musician_id': u['id']}).to_list(500)
-        reviews = await db.reviews.find({'target_user_id': u['id']}).to_list(500)
-        rating = round(sum(r['rating'] for r in reviews) / len(reviews), 1) if reviews else 0
-        return {'total_applications': len(apps),
-                'pending': len([a for a in apps if a['status'] == 'pending']),
-                'accepted': len([a for a in apps if a['status'] == 'accepted']),
-                'rating': rating, 'reviews': len(reviews)}
+    apps = await db.applications.find({'musician_id': u['id']}).to_list(500)
+    reviews = await db.reviews.find({'target_user_id': u['id']}).to_list(500)
+    rating = round(sum(r['rating'] for r in reviews) / len(reviews), 1) if reviews else 0
+    return {'total_applications': len(apps),
+            'pending': len([a for a in apps if a['status'] == 'pending']),
+            'accepted': len([a for a in apps if a['status'] == 'accepted']),
+            'rating': rating, 'reviews': len(reviews)}
 
-# ------------- Seed -------------
+# ================== Seed ==================
 @api.post("/seed")
 async def seed():
-    existing = await db.users.count_documents({})
-    if existing > 3:
-        return {'seeded': False, 'reason': 'Already has data'}
+    if await db.users.count_documents({}) > 3:
+        # ensure venues exist
+        if await db.venues.count_documents({}) == 0:
+            await seed_venues()
+        return {'seeded': False, 'reason': 'Already seeded'}
+    await do_seed()
+    return {'seeded': True}
 
-    # Organizers
+async def seed_venues():
+    venues = [
+        {'id': str(uuid.uuid4()), 'name': 'The Blue Frog', 'city': 'Mumbai', 'type': 'Club',
+         'cover_url': 'https://images.unsplash.com/photo-1493225255756-d9584f8606e9?w=800',
+         'capacity': 300, 'rating': 4.7},
+        {'id': str(uuid.uuid4()), 'name': 'Fandom @ Gilly\'s', 'city': 'Bengaluru', 'type': 'Club',
+         'cover_url': 'https://images.unsplash.com/photo-1571266028243-e4bb35f01e9d?w=800',
+         'capacity': 500, 'rating': 4.6},
+        {'id': str(uuid.uuid4()), 'name': 'Hard Rock Cafe', 'city': 'Delhi', 'type': 'Lounge',
+         'cover_url': 'https://images.unsplash.com/photo-1470229722913-7c0e2dbbafd3?w=800',
+         'capacity': 250, 'rating': 4.5},
+        {'id': str(uuid.uuid4()), 'name': 'antiSocial', 'city': 'Mumbai', 'type': 'Underground',
+         'cover_url': 'https://images.unsplash.com/photo-1429962714451-bb934ecdc4ec?w=800',
+         'capacity': 200, 'rating': 4.8},
+    ]
+    await db.venues.insert_many(venues)
+
+async def do_seed():
     orgs = [
         {'email': 'sunset@stagelink.dev', 'full_name': 'Sunset Sound Co', 'org': 'Sunset Sound Co', 'city': 'Mumbai'},
         {'email': 'nova@stagelink.dev', 'full_name': 'Nova Events', 'org': 'Nova Events', 'city': 'Bengaluru'},
@@ -445,111 +695,150 @@ async def seed():
     for o in orgs:
         uid = str(uuid.uuid4())
         await db.users.insert_one({'id': uid, 'email': o['email'], 'full_name': o['full_name'],
-                                   'password_hash': hash_pw('demo1234'), 'role': 'organizer',
-                                   'onboarded': True, 'avatar_url': None, 'created_at': now_iso()})
+                                   'password_hash': hash_pw('demo1234'), 'roles': ['organizer'],
+                                   'active_role': 'organizer', 'onboarded': True,
+                                   'verified': True, 'premium': False,
+                                   'avatar_url': None, 'created_at': now_iso()})
         await db.organizers.insert_one({'user_id': uid, 'org_name': o['org'], 'city': o['city'],
-                                        'bio': f"Premium event partners in {o['city']}.",
-                                        'updated_at': now_iso()})
+                                        'bio': f"Premium event partners in {o['city']}.", 'updated_at': now_iso()})
         org_ids.append(uid)
 
-    # Musicians
     musicians = [
         {'name': 'Ariya Kapoor', 'city': 'Mumbai', 'genres': ['Jazz', 'Soul'], 'instruments': ['Vocals'], 'exp': 8, 'price': 6000,
-         'avatar': 'https://images.unsplash.com/photo-1516280440614-37939bbacd81?w=400'},
+         'avatar': 'https://images.unsplash.com/photo-1516280440614-37939bbacd81?w=400',
+         'cover': 'https://images.unsplash.com/photo-1415201364774-f6f0bb35f28f?w=1200'},
         {'name': 'Kabir Rao', 'city': 'Bengaluru', 'genres': ['Indie', 'Rock'], 'instruments': ['Guitar'], 'exp': 5, 'price': 4500,
-         'avatar': 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=400'},
+         'avatar': 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=400',
+         'cover': 'https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=1200'},
         {'name': 'Naina Iyer', 'city': 'Delhi', 'genres': ['Classical', 'Fusion'], 'instruments': ['Violin'], 'exp': 12, 'price': 8500,
-         'avatar': 'https://images.unsplash.com/photo-1509228468518-180dd4864904?w=400'},
+         'avatar': 'https://images.unsplash.com/photo-1509228468518-180dd4864904?w=400',
+         'cover': 'https://images.unsplash.com/photo-1533174072545-7a4b6ad7a6c3?w=1200'},
         {'name': 'Rohan Menon', 'city': 'Mumbai', 'genres': ['EDM', 'House'], 'instruments': ['DJ Deck'], 'exp': 6, 'price': 12000,
-         'avatar': 'https://images.unsplash.com/photo-1493225255756-d9584f8606e9?w=400'},
+         'avatar': 'https://images.unsplash.com/photo-1493225255756-d9584f8606e9?w=400',
+         'cover': 'https://images.unsplash.com/photo-1571266028243-e4bb35f01e9d?w=1200'},
         {'name': 'Priya Verma', 'city': 'Bengaluru', 'genres': ['Pop', 'R&B'], 'instruments': ['Vocals', 'Keyboard'], 'exp': 4, 'price': 5500,
-         'avatar': 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=400'},
+         'avatar': 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=400',
+         'cover': 'https://images.unsplash.com/photo-1429962714451-bb934ecdc4ec?w=1200'},
+        {'name': 'Dev Sharma', 'city': 'Delhi', 'genres': ['Rock', 'Metal'], 'instruments': ['Drums'], 'exp': 9, 'price': 7000,
+         'avatar': 'https://images.unsplash.com/photo-1520785643438-5bf77931f493?w=400',
+         'cover': 'https://images.unsplash.com/photo-1470229722913-7c0e2dbbafd3?w=1200'},
     ]
-    for m in musicians:
+    musician_ids = []
+    for i, m in enumerate(musicians):
         uid = str(uuid.uuid4())
+        musician_ids.append(uid)
         await db.users.insert_one({'id': uid, 'email': m['name'].lower().replace(' ', '.') + '@stagelink.dev',
                                    'full_name': m['name'], 'password_hash': hash_pw('demo1234'),
-                                   'role': 'musician', 'onboarded': True,
+                                   'roles': ['musician'], 'active_role': 'musician', 'onboarded': True,
+                                   'verified': i < 3, 'premium': i < 2,
                                    'avatar_url': m['avatar'], 'created_at': now_iso()})
-        await db.musicians.insert_one({'user_id': uid, 'bio': f"{m['name']} — {'/'.join(m['genres'])} artist based in {m['city']}.",
+        await db.musicians.insert_one({'user_id': uid,
+                                       'bio': f"{m['name']} — {'/'.join(m['genres'])} artist based in {m['city']}. "
+                                              f"Bringing high-energy live sets crafted for unforgettable nights.",
                                        'city': m['city'], 'genres': m['genres'], 'instruments': m['instruments'],
                                        'languages': ['English', 'Hindi'], 'experience_years': m['exp'],
                                        'pricing_per_hour': m['price'], 'demo_video_url': None,
-                                       'youtube_url': None, 'instagram_url': None,
-                                       'avatar_url': m['avatar'], 'updated_at': now_iso()})
-        # Seed a review
-        await db.reviews.insert_one({'id': str(uuid.uuid4()), 'author_id': org_ids[0],
+                                       'youtube_url': f"https://youtube.com/@{m['name'].lower().replace(' ','')}",
+                                       'instagram_url': f"https://instagram.com/{m['name'].lower().replace(' ','')}",
+                                       'avatar_url': m['avatar'], 'cover_url': m['cover'],
+                                       'updated_at': now_iso()})
+        await db.reviews.insert_one({'id': str(uuid.uuid4()), 'author_id': org_ids[i % 3],
                                      'target_user_id': uid, 'rating': 5,
                                      'author_name': 'Sunset Sound Co',
-                                     'comment': 'Incredible performance, professional and punctual.',
+                                     'comment': 'Absolute pro. On-time, prepared, and phenomenal on stage.',
                                      'created_at': now_iso()})
 
-    # Gigs
     gigs = [
         {'title': 'Rooftop Jazz Night', 'city': 'Mumbai', 'event_type': 'club', 'genre': 'Jazz',
          'instrument_needed': 'Vocals', 'budget': 15000,
-         'description': 'Sophisticated 3-hour rooftop set for our monthly jazz series. Original + covers welcome.',
+         'description': 'Sophisticated 3-hour rooftop set for our monthly jazz series.',
          'cover_url': 'https://images.unsplash.com/photo-1415201364774-f6f0bb35f28f?w=800'},
         {'title': 'Beachside Wedding Reception', 'city': 'Mumbai', 'event_type': 'wedding', 'genre': 'Pop',
          'instrument_needed': 'Vocals', 'budget': 45000,
-         'description': 'Live acoustic set during cocktail hour + reception. Bollywood + English mix.',
+         'description': 'Live acoustic set during cocktail hour + reception.',
          'cover_url': 'https://images.unsplash.com/photo-1519741497674-611481863552?w=800'},
         {'title': 'Corporate Off-site — Indie Set', 'city': 'Bengaluru', 'event_type': 'corporate', 'genre': 'Indie',
          'instrument_needed': 'Guitar', 'budget': 22000,
-         'description': 'Chill 90-minute indie set for a tech company off-site. Sound provided.',
+         'description': 'Chill 90-minute indie set for a tech company off-site.',
          'cover_url': 'https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=800'},
         {'title': 'Diwali Fusion Concert', 'city': 'Delhi', 'event_type': 'festival', 'genre': 'Fusion',
          'instrument_needed': 'Violin', 'budget': 38000,
-         'description': 'Headline slot at our annual Diwali arts festival. 45 min set.',
+         'description': 'Headline slot at our annual Diwali arts festival.',
          'cover_url': 'https://images.unsplash.com/photo-1533174072545-7a4b6ad7a6c3?w=800'},
         {'title': 'Warehouse EDM Night', 'city': 'Mumbai', 'event_type': 'club', 'genre': 'EDM',
          'instrument_needed': 'DJ Deck', 'budget': 30000,
-         'description': 'Underground 2-hour set at a converted warehouse space. High-end CDJ setup ready.',
+         'description': 'Underground 2-hour set at a converted warehouse space.',
          'cover_url': 'https://images.unsplash.com/photo-1571266028243-e4bb35f01e9d?w=800'},
         {'title': 'Cafe Sundowner Series', 'city': 'Bengaluru', 'event_type': 'private', 'genre': 'Soul',
          'instrument_needed': 'Vocals', 'budget': 8000,
-         'description': 'Weekly Sunday evening 2-hour acoustic set. Ongoing residency possible.',
+         'description': 'Weekly Sunday 2-hour acoustic set.',
          'cover_url': 'https://images.unsplash.com/photo-1470229722913-7c0e2dbbafd3?w=800'},
         {'title': 'Sangeet Night', 'city': 'Delhi', 'event_type': 'wedding', 'genre': 'Pop',
          'instrument_needed': 'Keyboard', 'budget': 28000,
-         'description': 'Live band for pre-wedding sangeet. Bollywood dance floor essential.',
+         'description': 'Live band for pre-wedding sangeet.',
          'cover_url': 'https://images.unsplash.com/photo-1533174072545-7a4b6ad7a6c3?w=800'},
         {'title': 'Startup Launch Party', 'city': 'Bengaluru', 'event_type': 'corporate', 'genre': 'R&B',
          'instrument_needed': 'Vocals', 'budget': 18000,
-         'description': 'Live vocals + DJ hybrid for 200-guest launch event. 2-hour set.',
+         'description': 'Live vocals + DJ hybrid for 200-guest launch event.',
          'cover_url': 'https://images.unsplash.com/photo-1429962714451-bb934ecdc4ec?w=800'},
+        {'title': 'Metal Fest — Stage 2', 'city': 'Delhi', 'event_type': 'festival', 'genre': 'Rock',
+         'instrument_needed': 'Drums', 'budget': 55000,
+         'description': 'Support slot at Delhi\'s biggest indie metal fest.',
+         'cover_url': 'https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=800'},
     ]
+    gig_ids = []
     for i, g in enumerate(gigs):
         gid = str(uuid.uuid4())
-        future = (datetime.now(timezone.utc) + timedelta(days=7 + i * 5)).date().isoformat()
+        gig_ids.append(gid)
+        future = (datetime.now(timezone.utc) + timedelta(days=7 + i * 4)).date().isoformat()
         await db.gigs.insert_one({**g, 'id': gid, 'organizer_id': org_ids[i % len(org_ids)],
                                   'date': future, 'status': 'open', 'created_at': now_iso(),
                                   'featured': i < 2})
-    return {'seeded': True, 'gigs': len(gigs), 'musicians': len(musicians)}
 
-# ------------- Root -------------
+    # Seed applications + messages
+    if musician_ids:
+        await db.applications.insert_one({'id': str(uuid.uuid4()), 'gig_id': gig_ids[0],
+                                          'musician_id': musician_ids[0], 'message': 'Would love to play this set!',
+                                          'status': 'accepted', 'created_at': now_iso()})
+        await db.messages.insert_one({'id': str(uuid.uuid4()), 'from_id': org_ids[0], 'to_id': musician_ids[0],
+                                      'text': "Hey Ariya, loved your last set. You free next Friday?",
+                                      'read': False, 'created_at': now_iso()})
+        await db.messages.insert_one({'id': str(uuid.uuid4()), 'from_id': musician_ids[0], 'to_id': org_ids[0],
+                                      'text': "Absolutely — send me the venue details please.",
+                                      'read': True, 'created_at': now_iso()})
+
+    await seed_venues()
+
+# ================== Root ==================
 @api.get("/")
 async def root():
-    return {'app': 'StageLink API', 'version': '1.0'}
+    return {'app': 'StageLink API', 'version': '2.0'}
 
 app.include_router(api)
-
-app.add_middleware(
-    CORSMiddleware, allow_credentials=True, allow_origins=["*"],
-    allow_methods=["*"], allow_headers=["*"],
-)
+app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=["*"],
+                   allow_methods=["*"], allow_headers=["*"])
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 @app.on_event("startup")
 async def startup():
-    # Auto-seed
     try:
-        count = await db.users.count_documents({})
-        if count == 0:
-            await seed()
+        # Wipe old single-role user data if legacy fields exist (migration)
+        legacy = await db.users.find_one({'role': {'$exists': True}}, {'_id': 0})
+        if legacy:
+            # migrate: convert role -> roles/active_role
+            async for doc in db.users.find({'role': {'$exists': True}}):
+                r = doc.get('role')
+                update = {'$unset': {'role': ""}}
+                if r and 'roles' not in doc:
+                    update['$set'] = {'roles': [r], 'active_role': r}
+                await db.users.update_one({'_id': doc['_id']}, update)
+        if await db.users.count_documents({}) == 0:
+            await do_seed()
+        elif await db.venues.count_documents({}) == 0:
+            await seed_venues()
     except Exception as e:
-        logging.exception("Seed error: %s", e)
+        logging.exception("Startup error: %s", e)
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
