@@ -1,0 +1,206 @@
+{
+  "app_name": "StageLink",
+  "personality": "6 Glass / Luxe DARK (with 7 Dark-First Utility structural influence)",
+  "personality_one_liner": "A cinematic, premium operating system for live music, combining Spotify's rich dark glass surfaces with Linear's strict, utilitarian typography and deep contrast.",
+  "color": {
+    "surface": "#09090B",
+    "onSurface": "#FAFAFA",
+    "surfaceSecondary": "#18181B",
+    "onSurfaceSecondary": "#E4E4E7",
+    "surfaceTertiary": "#27272A",
+    "onSurfaceTertiary": "#A1A1AA",
+    "surfaceInverse": "#FAFAFA",
+    "onSurfaceInverse": "#09090B",
+    "brand": "#E11D48",
+    "brandPrimary": "#E11D48",
+    "onBrandPrimary": "#FFFFFF",
+    "brandSecondary": "#BE123C",
+    "onBrandSecondary": "#FFFFFF",
+    "brandTertiary": "#4C0519",
+    "onBrandTertiary": "#FDA4AF",
+    "success": "#059669",
+    "onSuccess": "#FFFFFF",
+    "warning": "#D97706",
+    "onWarning": "#FFFFFF",
+    "error": "#DC2626",
+    "onError": "#FFFFFF",
+    "info": "#FAFAFA",
+    "onInfo": "#09090B",
+    "border": "#27272A",
+    "borderStrong": "#3F3F46",
+    "divider": "#27272A",
+    "light": {
+      "surface": "#FFFFFF",
+      "onSurface": "#09090B",
+      "surfaceSecondary": "#F4F4F5",
+      "onSurfaceSecondary": "#27272A",
+      "surfaceTertiary": "#E4E4E7",
+      "onSurfaceTertiary": "#52525B",
+      "surfaceInverse": "#09090B",
+      "onSurfaceInverse": "#FAFAFA",
+      "brand": "#E11D48",
+      "brandPrimary": "#E11D48",
+      "onBrandPrimary": "#FFFFFF",
+      "brandSecondary": "#BE123C",
+      "onBrandSecondary": "#FFFFFF",
+      "brandTertiary": "#FFE4E6",
+      "onBrandTertiary": "#9F1239",
+      "success": "#059669",
+      "onSuccess": "#FFFFFF",
+      "warning": "#D97706",
+      "onWarning": "#FFFFFF",
+      "error": "#DC2626",
+      "onError": "#FFFFFF",
+      "info": "#09090B",
+      "onInfo": "#FFFFFF",
+      "border": "#E4E4E7",
+      "borderStrong": "#D4D4D8",
+      "divider": "#F4F4F5"
+    }
+  },
+  "typography": {
+    "displayFontFamily": "Plus Jakarta Sans",
+    "textFontFamily": "Geist",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Generous vertical breathing room for cinematic feel (Glass/Luxe), but tight, list-first content blocks within cards (Dark-First Utility). Always respect thumb zone for primary CTAs.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 6,
+    "md": 12,
+    "lg": 20,
+    "pill": 999
+  },
+  "shadow_tier": "0",
+  "navigation": "bottom_tabs",
+  "icon_set": "Phosphor",
+  "glassmorphism": {
+    "enabled": true,
+    "do's": [
+      "Use heavy frosted glass on bottom tab bar, floating actions (FAB), and sticky headers.",
+      "Use a translucent brand-tinted base layer underneath the glass to ensure text readability.",
+      "Apply subtle grain/noise overlays over glass layers for premium Luxe texture.",
+      "Use frosted overlays on featured gig hero cards over dark concert imagery."
+    ],
+    "dont's": [
+      "Never blur body text regions or form fields.",
+      "Don't stack more than 2 glass surfaces (e.g., sticky header + bottom tab bar is fine, don't add floating glass cards in between).",
+      "Avoid weak blur where underlying text/details fight with foreground readability."
+    ]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-glass-effect",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "Splash",
+      "purpose": "Cinematic entry showcasing the premium, spotlight aesthetic.",
+      "states": {
+        "loading": "Subtle pulsing brand logo in center.",
+        "empty": "N/A",
+        "error": "N/A"
+      },
+      "layout": "Full-bleed dark concert image with a top-down gradient scrim. A single elegant wordmark ('StageLink') anchored at the center with a subtle glow."
+    },
+    {
+      "name": "Auth / Role Selection",
+      "purpose": "Frictionless entry and selection between Musician and Organizer roles.",
+      "states": {
+        "loading": "Floating spinner inside the CTA.",
+        "empty": "N/A",
+        "error": "Standard inline red error text below failing input."
+      },
+      "layout": "Split-screen aesthetic or large tactile buttons. Clean typography hierarchy (Linear style). 'Musician' vs 'Organizer' presented as two massive, beautifully rounded cards with subtle background images and deep glass overlays. No floating labels in forms."
+    },
+    {
+      "name": "Home / Discover (Marketplace)",
+      "purpose": "Spotify-style browse feed for gigs (if Musician) or talent (if Organizer).",
+      "states": {
+        "loading": "Skeleton UI with dark shimmer effects.",
+        "empty": "Elegant stage illustration with 'No gigs found in your city' + CTA 'Change Filters'.",
+        "error": "Minimalist error state with 'Retry' CTA."
+      },
+      "layout": "Compact header with contextual title. Sticky horizontal glass pill for quick filters (Genre, Date). Vertical feed of large, rounded gig cards (lg radius). Each card has a subtle photo backdrop, heavy bottom-up scrim, and tight, scannable metadata rows (Linear-style dense info) below the title."
+    },
+    {
+      "name": "Gig Detail",
+      "purpose": "Immersive breakdown of a gig's requirements and application action.",
+      "states": {
+        "loading": "Spinner centered in dark screen.",
+        "empty": "N/A",
+        "error": "Toast notification on failed load."
+      },
+      "layout": "Hero image stretches behind the status bar with heavy gradient fade (Spotify album style). Sticky bottom CTA 'Apply Now' pinned above safe area inside a frosted glass container. Middle content includes dense, list-first metadata (Pay, Location, Equipment) with Phosphor outlined icons."
+    },
+    {
+      "name": "Musician Profile",
+      "purpose": "A premium portfolio view of the talent, heavily prioritizing media and stats.",
+      "states": {
+        "loading": "Skeleton loaders matching the card shapes.",
+        "empty": "N/A",
+        "error": "Centered minimalist error prompt."
+      },
+      "layout": "Cinematic cover photo fading into surface color. Avatar overlapping the fold. Staggered grid for demo videos and gallery. Highly structured, Linear-style rows for Ratings, Reliability Score, and AI Pricing recommendations. Pinned bottom CTA for 'Book / Chat'."
+    },
+    {
+      "name": "Organizer Dashboard",
+      "purpose": "Utilitarian command center for tracking events, applications, and payments.",
+      "states": {
+        "loading": "Staggered row skeleton.",
+        "empty": "Icon + 'No active events' + primary CTA 'Create Event'.",
+        "error": "Inline error block."
+      },
+      "layout": "Strict grid structure. Large metrics (applicants, budget spent) using display font. Dense, easily scannable list of active gigs with status badges (brandTertiary for 'Hiring', surfaceTertiary for 'Filled'). Functional, no-nonsense UI."
+    }
+  ],
+  "images": {
+    "splash_bg": {
+      "url": "https://images.pexels.com/photos/5389617/pexels-photo-5389617.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "alt": "Dramatic stage lights cutting through dark atmosphere"
+    },
+    "hero_gig_card": {
+      "url": "https://images.unsplash.com/photo-1459749411175-04bf5292ceea?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1ODF8MHwxfHNlYXJjaHwxfHxsaXZlJTIwbXVzaWMlMjBldmVudCUyMGNyb3dkfGVufDB8fHx8MTc4NDcwMzcwMnww&ixlib=rb-4.1.0&q=85",
+      "alt": "Energetic live concert crowd"
+    },
+    "musician_avatar": {
+      "url": "https://images.pexels.com/photos/18368848/pexels-photo-18368848.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "alt": "Musician passionately playing guitar on stage"
+    },
+    "empty_gigs": {
+      "url": "https://images.unsplash.com/photo-1485579149621-3123dd979885?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2ODh8MHwxfHNlYXJjaHwxfHxlbGVnYW50JTIwZW1wdHklMjBzdGFnZSUyMG1pY3JvcGhvbmV8ZW58MHx8fHwxNzg0NzAzNzAyfDA&ixlib=rb-4.1.0&q=85",
+      "alt": "Elegant single microphone on dark stage"
+    }
+  },
+  "instructions_to_main_agent": [
+    "Strictly follow the color palette provided. The app runs in DARK mode by default with deep obsidian backgrounds (zinc-950) and a sophisticated Ruby/Crimson accent.",
+    "Implement the 'Spotify + Linear' layout model: use immersive hero images and large typography (Spotify) paired with ultra-clean, tightly spaced metadata rows and scannable lists (Linear).",
+    "Ensure all interactive surfaces over scrolling content use heavy glassmorphism with a translucent tinted base layer to guarantee text readability.",
+    "Any text overlaid on hero images MUST use a vertical linear-gradient scrim (transparent to >70% surfaceInverse or black).",
+    "Primary call-to-action buttons must always be sticky at the bottom of the screen (above the safe area), never buried within scrolling content.",
+    "Use 'Geist' for high-density UI elements (stats, metadata, tags) and 'Plus Jakarta Sans' for large editorial headlines.",
+    "Include subtle haptic feedback on all major interactions (applying for gigs, switching tabs, toggling filters)."
+  ]
+}
