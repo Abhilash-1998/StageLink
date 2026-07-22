@@ -1,0 +1,18 @@
+export const theme = {
+  bg: "#09090B",
+  bg2: "#18181B",
+  bg3: "#27272A",
+  text: "#FAFAFA",
+  textDim: "#A1A1AA",
+  textMid: "#E4E4E7",
+  brand: "#E11D48",
+  brand2: "#BE123C",
+  brandTint: "#4C0519",
+  border: "#27272A",
+  borderStrong: "#3F3F46",
+  success: "#059669",
+  warning: "#D97706",
+  error: "#DC2626",
+  radius: { sm: 6, md: 12, lg: 20, pill: 999 },
+  space: { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32, xxxl: 48 },
+} as const;
