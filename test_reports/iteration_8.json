@@ -1,0 +1,35 @@
+{
+  "summary": "Post visibility hygiene fix VERIFIED. All 7 new visibility tests pass (private/public-default/followers/invalid 422 on POST; entities filter excludes private+followers; PATCH public->private removes post from public entities; PATCH invalid -> 422). Iteration 7 regression suite: 11/11 pass + 1 skip (musician cannot create gigs — pre-existing role-gating, identical to iter 7). No regressions introduced. The leak flagged in iteration 7 is now closed: PostIn/PostUpdate accept visibility as Literal['public','followers','private'], create_post persists inp.visibility or 'public', and /api/users/{uid}/entities correctly filters posts by visibility=='public' OR field absent.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_post_visibility.py",
+    "/app/backend/tests/test_unified_profile.py",
+    "/app/test_reports/pytest/iteration_8.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py:247-251 — PostIn now correctly includes `visibility: Optional[Literal['public','followers','private']] = 'public'`. Default at the model level guarantees the field is always present in the request object.",
+    "server.py:257-261 — PostUpdate uses `= None` for visibility so PATCH only updates when explicitly sent (works with `exclude_unset=True` at L1253).",
+    "server.py:1197 — create_post writes `'visibility': inp.visibility or 'public'` — defensively defaults even if the model default is bypassed. Good.",
+    "server.py:1370-1373 — user_entities filter `{'$or': [{'visibility': 'public'}, {'visibility': {'$exists': False}}]}` correctly handles both new posts (with the field) and legacy posts (without the field). Backwards-compatible.",
+    "Literal validation on Pydantic gives 422 on invalid values — verified via automated test."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_post_visibility.py (new)"
+  ],
+  "success_rate": {"backend": "100% (7/7 new + 11/11 iter7 regression, 1 skipped by role)", "frontend": "not tested (backend-only patch)"},
+  "seed_data_creation": "No seed data created. All TEST_ posts created during tests are auto-cleaned via a pytest autouse fixture that DELETEs tracked post IDs in teardown.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Visibility field on posts is now fully functional. Test file /app/backend/tests/test_post_visibility.py covers create (public/private/followers/default/invalid), the /users/{uid}/entities public filter, and PATCH visibility flips. Combined with /app/backend/tests/test_unified_profile.py (iter 7), the community-posts + unified-profile surface has 18 passing tests. Login testIDs (frontend) unchanged from iter 7.",
+  "rca_of_issue": "Iteration 7 leak (RCA recap): PostIn was missing `visibility`, so client-supplied values were silently discarded by Pydantic and the field was never persisted; the entities filter passed only because the field was universally absent. Fix applied in this iteration: (a) PostIn adds `visibility: Optional[Literal['public','followers','private']] = 'public'`; (b) PostUpdate adds same as `= None` to keep PATCH semantics; (c) create_post writes visibility into Mongo; (d) filter unchanged. Verified end-to-end via POST -> GET /users/{uid}/entities and PATCH -> GET /users/{uid}/entities. Invalid value now correctly rejected with 422 via Pydantic Literal validation."
+}

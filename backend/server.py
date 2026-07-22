@@ -248,6 +248,7 @@ class PostIn(BaseModel):
     text: str
     media_url: Optional[str] = None
     media_type: Optional[Literal['image', 'video']] = None
+    visibility: Optional[Literal['public', 'followers', 'private']] = 'public'
 
 class CommentIn(BaseModel):
     post_id: str
@@ -257,6 +258,7 @@ class PostUpdate(BaseModel):
     text: Optional[str] = None
     media_url: Optional[str] = None
     media_type: Optional[Literal['image', 'video']] = None
+    visibility: Optional[Literal['public', 'followers', 'private']] = None
 
 # ================== Helpers ==================
 def now_iso():
@@ -1192,6 +1194,7 @@ async def create_post(inp: PostIn, u=Depends(get_user)):
     doc = {'id': pid, 'author_id': u['id'], 'author_name': u['full_name'],
            'author_avatar': u.get('avatar_url'), 'text': inp.text,
            'media_url': inp.media_url, 'media_type': inp.media_type,
+           'visibility': inp.visibility or 'public',
            'like_count': 0, 'comment_count': 0, 'created_at': now_iso()}
     await db.posts.insert_one(doc)
     doc.pop('_id', None)
