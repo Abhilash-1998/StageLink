@@ -16,6 +16,14 @@ const ENDPOINTS: Record<EntityType, string> = {
   Studios: "/studios", Equipment: "/equipment", Lessons: "/lessons", Venues: "/venues",
 };
 
+/**
+ * Discover — unified search across every marketplace entity.
+ * Root-cause fix for the chip-filter crash: clearing `items` when `type`
+ * changes is essential. Otherwise FlatList re-renders old objects
+ * against the new switch case, and e.g. a Gig has no `.user` field →
+ * `item.user.id` throws "Cannot read property 'id' of undefined".
+ * We also defensively guard every nested access in renderCard.
+ */
 export default function Discover() {
   const { fetchApi } = useAuth();
   const [type, setType] = useState<EntityType>("Gigs");
@@ -23,13 +31,22 @@ export default function Discover() {
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const switchType = (t: EntityType) => {
+    if (t === type) return;
+    // Prevent stale-shape crash: drop old rows before the new fetch resolves.
+    setItems([]);
+    setType(t);
+  };
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
       if (q.trim()) params.set("q", q.trim());
       const data: any[] = await fetchApi(`${ENDPOINTS[type]}?${params.toString()}`);
-      setItems(data);
+      // Filter out malformed entries so the renderer only ever sees valid shapes
+      const clean = Array.isArray(data) ? data.filter(x => x && (x.id || x.user?.id)) : [];
+      setItems(clean);
     } catch { setItems([]); }
     finally { setLoading(false); }
   }, [fetchApi, type, q]);
@@ -37,101 +54,118 @@ export default function Discover() {
   useEffect(() => { load(); }, [load]);
 
   const renderCard = (item: any) => {
+    if (!item) return null;
     switch (type) {
-      case "Gigs":
+      case "Gigs": {
+        if (!item.id) return null;
         return (
           <Pressable testID={`disc-gig-${item.id}`} onPress={() => router.push(`/gig/${item.id}`)} style={styles.card}>
             <ImageBackground source={{ uri: item.cover_url }} style={{ height: 120 }} imageStyle={{ borderTopLeftRadius: theme.radius.lg, borderTopRightRadius: theme.radius.lg }}>
               <LinearGradient colors={["transparent", "rgba(9,9,11,0.85)"]} style={StyleSheet.absoluteFill} />
-              <View style={styles.tag}><Text style={styles.tagTxt}>{item.event_type?.toUpperCase()}</Text></View>
+              {item.event_type && <View style={styles.tag}><Text style={styles.tagTxt}>{String(item.event_type).toUpperCase()}</Text></View>}
             </ImageBackground>
             <View style={styles.body}>
-              <Text style={styles.title} numberOfLines={1}>{item.title}</Text>
-              <Text style={styles.meta}>{item.city} · {formatDate(item.date)}</Text>
-              <Text style={styles.price}>₹{item.budget?.toLocaleString("en-IN")}</Text>
+              <Text style={styles.title} numberOfLines={1}>{item.title || "Untitled gig"}</Text>
+              <Text style={styles.meta}>{item.city || "—"} · {formatDate(item.date)}</Text>
+              {typeof item.budget === "number" && <Text style={styles.price}>₹{item.budget.toLocaleString("en-IN")}</Text>}
             </View>
           </Pressable>
         );
-      case "Musicians":
+      }
+      case "Musicians": {
+        const u = item.user;
+        const p = item.profile || {};
+        if (!u?.id) return null;
         return (
-          <Pressable testID={`disc-mus-${item.user.id}`} onPress={() => router.push(`/user/${item.user.id}`)} style={styles.card}>
-            {item.profile.cover_url && (
-              <ImageBackground source={{ uri: item.profile.cover_url }} style={{ height: 100 }} imageStyle={{ borderTopLeftRadius: theme.radius.lg, borderTopRightRadius: theme.radius.lg }}>
+          <Pressable testID={`disc-mus-${u.id}`} onPress={() => router.push(`/user/${u.id}`)} style={styles.card}>
+            {p.cover_url && (
+              <ImageBackground source={{ uri: p.cover_url }} style={{ height: 100 }} imageStyle={{ borderTopLeftRadius: theme.radius.lg, borderTopRightRadius: theme.radius.lg }}>
                 <LinearGradient colors={["transparent", "rgba(9,9,11,0.9)"]} style={StyleSheet.absoluteFill} />
               </ImageBackground>
             )}
             <View style={styles.body}>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-                {item.user.avatar_url ? <Image source={{ uri: item.user.avatar_url }} style={styles.avatar} /> :
-                  <View style={styles.avatar}><Text style={{ color: theme.text, fontWeight: "700" }}>{item.user.full_name[0]}</Text></View>}
+                {u.avatar_url ? <Image source={{ uri: u.avatar_url }} style={styles.avatar} /> :
+                  <View style={styles.avatar}><Text style={{ color: theme.text, fontWeight: "700" }}>{(u.full_name || "?").charAt(0)}</Text></View>}
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.title} numberOfLines={1}>{item.user.full_name} {item.user.verified && <Ionicons name="checkmark-circle" size={13} color={theme.brand} />}</Text>
-                  <Text style={styles.meta}>{item.profile.city} · {(item.profile.genres || []).slice(0,2).join(", ")}</Text>
+                  <Text style={styles.title} numberOfLines={1}>{u.full_name || "Unnamed"} {u.verified && <Ionicons name="checkmark-circle" size={13} color={theme.brand} />}</Text>
+                  <Text style={styles.meta}>{p.city || "—"} · {(p.genres || []).slice(0, 2).join(", ") || "No genres yet"}</Text>
                 </View>
               </View>
-              <Text style={styles.price}>₹{item.profile.pricing_per_hour?.toLocaleString("en-IN")}/hr</Text>
+              {p.pricing_per_hour ? <Text style={styles.price}>₹{Number(p.pricing_per_hour).toLocaleString("en-IN")}/hr</Text> : null}
             </View>
           </Pressable>
         );
-      case "Bands":
+      }
+      case "Bands": {
+        if (!item.id) return null;
         return (
-          <View testID={`disc-band-${item.id}`} style={styles.card}>
+          <Pressable testID={`disc-band-${item.id}`} onPress={() => router.push(`/user/${item.owner_id}`)} style={styles.card}>
             <ImageBackground source={{ uri: item.cover_url }} style={{ height: 120 }} imageStyle={{ borderTopLeftRadius: theme.radius.lg, borderTopRightRadius: theme.radius.lg }}>
               <LinearGradient colors={["transparent", "rgba(9,9,11,0.9)"]} style={StyleSheet.absoluteFill} />
             </ImageBackground>
             <View style={styles.body}>
-              <Text style={styles.title}>{item.name}</Text>
-              <Text style={styles.meta}>{item.city} · {(item.genres || []).join(", ")}</Text>
-              {item.looking_for?.length > 0 && (
+              <Text style={styles.title}>{item.name || "Unnamed band"}</Text>
+              <Text style={styles.meta}>{item.city || "—"}{(item.genres || []).length > 0 ? ` · ${(item.genres || []).join(", ")}` : ""}</Text>
+              {(item.looking_for || []).length > 0 && (
                 <View style={styles.pillRow}>
                   {item.looking_for.map((r: string) => <View key={r} style={styles.pill}><Text style={styles.pillTxt}>Needs {r}</Text></View>)}
                 </View>
               )}
             </View>
-          </View>
+          </Pressable>
         );
+      }
       case "Studios":
-      case "Venues":
+      case "Venues": {
+        if (!item.id) return null;
         return (
-          <View testID={`disc-${type.toLowerCase()}-${item.id}`} style={styles.card}>
+          <Pressable testID={`disc-${type.toLowerCase()}-${item.id}`} onPress={() => item.owner_id && router.push(`/user/${item.owner_id}`)} style={styles.card}>
             <ImageBackground source={{ uri: item.cover_url }} style={{ height: 130 }} imageStyle={{ borderTopLeftRadius: theme.radius.lg, borderTopRightRadius: theme.radius.lg }}>
               <LinearGradient colors={["transparent", "rgba(9,9,11,0.85)"]} style={StyleSheet.absoluteFill} />
             </ImageBackground>
             <View style={styles.body}>
-              <Text style={styles.title}>{item.name}</Text>
-              <Text style={styles.meta}>{item.city} {item.type ? `· ${item.type}` : ""}{item.capacity ? ` · ${item.capacity} pax` : ""}</Text>
-              {item.hourly_rate ? <Text style={styles.price}>₹{item.hourly_rate.toLocaleString("en-IN")}/hr</Text>
+              <Text style={styles.title}>{item.name || "Unnamed"}</Text>
+              <Text style={styles.meta}>{item.city || "—"}{item.type ? ` · ${item.type}` : ""}{item.capacity ? ` · ${item.capacity} pax` : ""}</Text>
+              {item.hourly_rate ? <Text style={styles.price}>₹{Number(item.hourly_rate).toLocaleString("en-IN")}/hr</Text>
                 : item.rating ? <Text style={styles.price}>{item.rating} ★</Text> : null}
             </View>
-          </View>
+          </Pressable>
         );
-      case "Equipment":
+      }
+      case "Equipment": {
+        if (!item.id) return null;
         return (
-          <View testID={`disc-eq-${item.id}`} style={styles.card}>
+          <Pressable testID={`disc-eq-${item.id}`} onPress={() => item.owner_id && router.push(`/user/${item.owner_id}`)} style={styles.card}>
             <ImageBackground source={{ uri: item.cover_url }} style={{ height: 130 }} imageStyle={{ borderTopLeftRadius: theme.radius.lg, borderTopRightRadius: theme.radius.lg }}>
               <LinearGradient colors={["transparent", "rgba(9,9,11,0.85)"]} style={StyleSheet.absoluteFill} />
-              <View style={styles.tag}><Text style={styles.tagTxt}>{item.listing_type?.toUpperCase()}</Text></View>
+              {item.listing_type && <View style={styles.tag}><Text style={styles.tagTxt}>{String(item.listing_type).toUpperCase()}</Text></View>}
             </ImageBackground>
             <View style={styles.body}>
-              <Text style={styles.title} numberOfLines={1}>{item.title}</Text>
-              <Text style={styles.meta}>{item.city} · {item.category}</Text>
-              <Text style={styles.price}>₹{item.price?.toLocaleString("en-IN")}{item.listing_type === "rent" ? " / day" : ""}</Text>
+              <Text style={styles.title} numberOfLines={1}>{item.title || "Untitled"}</Text>
+              <Text style={styles.meta}>{item.city || "—"}{item.category ? ` · ${item.category}` : ""}</Text>
+              {typeof item.price === "number" && <Text style={styles.price}>₹{item.price.toLocaleString("en-IN")}{item.listing_type === "rent" ? " / day" : ""}</Text>}
             </View>
-          </View>
+          </Pressable>
         );
-      case "Lessons":
+      }
+      case "Lessons": {
+        if (!item.id) return null;
         return (
-          <View testID={`disc-lesson-${item.id}`} style={styles.card}>
+          <Pressable testID={`disc-lesson-${item.id}`} onPress={() => item.teacher_id && router.push(`/user/${item.teacher_id}`)} style={styles.card}>
             <ImageBackground source={{ uri: item.cover_url }} style={{ height: 120 }} imageStyle={{ borderTopLeftRadius: theme.radius.lg, borderTopRightRadius: theme.radius.lg }}>
               <LinearGradient colors={["transparent", "rgba(9,9,11,0.85)"]} style={StyleSheet.absoluteFill} />
             </ImageBackground>
             <View style={styles.body}>
-              <Text style={styles.title}>{item.title}</Text>
-              <Text style={styles.meta}>{item.subject} · {item.format} · {item.city}</Text>
-              <Text style={styles.price}>₹{item.price_per_hour?.toLocaleString("en-IN")}/hr</Text>
+              <Text style={styles.title}>{item.title || "Untitled lesson"}</Text>
+              <Text style={styles.meta}>{[item.subject, item.format, item.city].filter(Boolean).join(" · ")}</Text>
+              {typeof item.price_per_hour === "number" && <Text style={styles.price}>₹{item.price_per_hour.toLocaleString("en-IN")}/hr</Text>}
             </View>
-          </View>
+          </Pressable>
         );
+      }
+      default:
+        return null;
     }
   };
 
@@ -154,7 +188,7 @@ export default function Discover() {
       </View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ maxHeight: 56 }} contentContainerStyle={styles.chipRow}>
         {TYPES.map(t => (
-          <Pressable key={t} testID={`type-${t}`} onPress={() => setType(t)} style={[styles.chip, type === t && styles.chipOn]}>
+          <Pressable key={t} testID={`type-${t}`} onPress={() => switchType(t)} style={[styles.chip, type === t && styles.chipOn]}>
             <Text style={[styles.chipTxt, type === t && styles.chipTxtOn]}>{t}</Text>
           </Pressable>
         ))}
@@ -164,7 +198,7 @@ export default function Discover() {
       ) : (
         <FlatList
           data={items}
-          keyExtractor={(it, i) => (it.id || it.user?.id || String(i))}
+          keyExtractor={(it, i) => String(it?.id || it?.user?.id || i)}
           contentContainerStyle={{ padding: 20, paddingBottom: 130, gap: 14 }}
           renderItem={({ item }) => renderCard(item)}
           ListEmptyComponent={<View style={styles.center}><Text style={{ color: theme.textDim }}>No {type.toLowerCase()} found.</Text></View>}

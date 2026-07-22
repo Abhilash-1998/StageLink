@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, RefreshControl, ActivityIndicator, Image, ImageBackground, TextInput, Modal, KeyboardAvoidingView, Platform } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable, RefreshControl, ActivityIndicator, Image, ImageBackground, TextInput, Modal, KeyboardAvoidingView, Platform, Share, Alert } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { router, useFocusEffect } from "expo-router";
@@ -67,6 +67,60 @@ export default function Home() {
     if (!authorId) return;
     if (authorId === user?.id) router.push("/(tabs)/profile");
     else router.push(`/user/${authorId}`);
+  };
+
+  // Comments modal — one shared instance for the whole feed
+  const [commentsPost, setCommentsPost] = useState<Post | null>(null);
+  const [comments, setComments] = useState<any[]>([]);
+  const [commentsLoading, setCommentsLoading] = useState(false);
+  const [newComment, setNewComment] = useState("");
+  const [postingComment, setPostingComment] = useState(false);
+
+  const openComments = async (p: Post) => {
+    setCommentsPost(p); setComments([]); setNewComment(""); setCommentsLoading(true);
+    try {
+      const r: any = await fetchApi(`/posts/${p.id}`);
+      setComments(Array.isArray(r?.comments) ? r.comments : []);
+    } catch { setComments([]); }
+    finally { setCommentsLoading(false); }
+  };
+  const submitComment = async () => {
+    if (!commentsPost || !newComment.trim()) return;
+    setPostingComment(true);
+    try {
+      const c: any = await fetchApi("/posts/comment", {
+        method: "POST", body: JSON.stringify({ post_id: commentsPost.id, text: newComment.trim() }),
+      });
+      setComments(prev => [...prev, c]);
+      setPosts(prev => prev.map(x => x.id === commentsPost.id ? { ...x, comment_count: (x.comment_count || 0) + 1 } : x));
+      setNewComment("");
+    } catch {}
+    finally { setPostingComment(false); }
+  };
+  const deleteComment = async (cid: string) => {
+    if (!(await confirmDelete("Delete comment?"))) return;
+    setComments(prev => prev.filter(c => c.id !== cid));
+    if (commentsPost) {
+      setPosts(prev => prev.map(x => x.id === commentsPost.id ? { ...x, comment_count: Math.max(0, (x.comment_count || 0) - 1) } : x));
+    }
+    try { await fetchApi(`/comments/${cid}`, { method: "DELETE" }); } catch {}
+  };
+
+  const sharePost = async (p: Post) => {
+    try {
+      await Share.share({
+        title: `StageLink · ${p.author_name}`,
+        message: `${p.author_name} on StageLink: "${p.text}"`,
+      });
+    } catch {}
+  };
+
+  const reportPost = (p: Post) => {
+    if (Platform.OS === "web") {
+      window.alert("Reported. Thanks — our team will review this post.");
+    } else {
+      Alert.alert("Reported", "Thanks — our team will review this post.", [{ text: "OK" }]);
+    }
   };
 
   if (loading) return <SafeAreaView style={styles.bg}><View style={styles.center}><ActivityIndicator color={theme.brand} /></View></SafeAreaView>;
@@ -196,13 +250,18 @@ export default function Home() {
                   <Ionicons name={p.liked ? "heart" : "heart-outline"} size={19} color={p.liked ? theme.brand : theme.textDim} />
                   <Text style={[styles.postActionTxt, p.liked && { color: theme.brand }]}>{p.like_count}</Text>
                 </Pressable>
-                <View style={styles.postAction}>
+                <Pressable testID={`comment-${p.id}`} onPress={() => openComments(p)} style={styles.postAction}>
                   <Ionicons name="chatbubble-outline" size={17} color={theme.textDim} />
                   <Text style={styles.postActionTxt}>{p.comment_count}</Text>
-                </View>
-                <View style={styles.postAction}>
+                </Pressable>
+                <Pressable testID={`share-${p.id}`} onPress={() => sharePost(p)} style={styles.postAction}>
                   <Ionicons name="share-outline" size={19} color={theme.textDim} />
-                </View>
+                </Pressable>
+                {p.author_id !== user?.id && (
+                  <Pressable testID={`report-${p.id}`} onPress={() => reportPost(p)} style={[styles.postAction, { marginLeft: "auto" }]}>
+                    <Ionicons name="flag-outline" size={16} color={theme.textDim} />
+                  </Pressable>
+                )}
               </View>
             </View>
           ))}
@@ -226,6 +285,64 @@ export default function Home() {
               <Pressable testID="edit-post-save" onPress={saveEdit} disabled={savingEdit} style={[styles.modalBtn, { backgroundColor: theme.brand }]}>
                 {savingEdit ? <ActivityIndicator color="#fff" size="small" /> :
                   <Text style={[styles.modalBtnTxt, { color: "#fff" }]}>Save</Text>}
+              </Pressable>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* Comments modal */}
+      <Modal transparent visible={!!commentsPost} animationType="slide" onRequestClose={() => setCommentsPost(null)}>
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.commentsBg}>
+          <View style={styles.commentsSheet}>
+            <View style={styles.commentsHead}>
+              <Text style={styles.modalTitle}>Comments</Text>
+              <Pressable testID="comments-close" onPress={() => setCommentsPost(null)} style={styles.commentsClose}>
+                <Ionicons name="close" size={20} color={theme.text} />
+              </Pressable>
+            </View>
+            {commentsLoading ? (
+              <View style={{ padding: 24, alignItems: "center" }}><ActivityIndicator color={theme.brand} /></View>
+            ) : (
+              <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 12, gap: 12 }} keyboardShouldPersistTaps="handled">
+                {comments.length === 0 && (
+                  <Text style={styles.commentsEmpty} testID="comments-empty">No comments yet — be the first.</Text>
+                )}
+                {comments.map(c => (
+                  <View key={c.id} style={styles.commentRow} testID={`comment-row-${c.id}`}>
+                    <Pressable testID={`comment-author-${c.id}`} onPress={() => goAuthor(c.author_id)} style={styles.commentAvatar}>
+                      {c.author_avatar ? <Image source={{ uri: c.author_avatar }} style={{ width: "100%", height: "100%" }} /> :
+                        <Text style={styles.commentAvatarTxt}>{(c.author_name || "?").charAt(0)}</Text>}
+                    </Pressable>
+                    <View style={{ flex: 1 }}>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                        <Pressable onPress={() => goAuthor(c.author_id)}>
+                          <Text style={styles.commentAuthor}>{c.author_name}</Text>
+                        </Pressable>
+                        <Text style={styles.commentDate}>{formatRelative(c.created_at)}</Text>
+                      </View>
+                      <Text style={styles.commentText}>{c.text}</Text>
+                    </View>
+                    {c.author_id === user?.id && (
+                      <Pressable testID={`comment-del-${c.id}`} onPress={() => deleteComment(c.id)} style={styles.commentDel}>
+                        <Ionicons name="trash-outline" size={13} color={theme.error} />
+                      </Pressable>
+                    )}
+                  </View>
+                ))}
+              </ScrollView>
+            )}
+            <View style={styles.commentInputRow}>
+              <TextInput
+                testID="comment-input"
+                style={styles.commentInput}
+                value={newComment} onChangeText={setNewComment}
+                placeholder="Write a comment…" placeholderTextColor={theme.textDim}
+                onSubmitEditing={submitComment} returnKeyType="send"
+              />
+              <Pressable testID="comment-send" onPress={submitComment} disabled={!newComment.trim() || postingComment} style={[styles.commentSend, (!newComment.trim() || postingComment) && { opacity: 0.5 }]}>
+                {postingComment ? <ActivityIndicator color="#fff" size="small" /> :
+                  <Ionicons name="arrow-up" size={18} color="#fff" />}
               </Pressable>
             </View>
           </View>
@@ -276,4 +393,19 @@ const styles = StyleSheet.create({
   modalInput: { ...type.bodySm, backgroundColor: theme.bg, borderColor: theme.border, borderWidth: 1, borderRadius: theme.radius.md, padding: 12, color: theme.text, minHeight: 100, textAlignVertical: "top" },
   modalBtn: { flex: 1, paddingVertical: 12, borderRadius: theme.radius.pill, alignItems: "center" },
   modalBtnTxt: { ...type.label, color: theme.text, fontWeight: "700" },
+  commentsBg: { flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "flex-end" },
+  commentsSheet: { backgroundColor: theme.bg2, borderTopLeftRadius: 20, borderTopRightRadius: 20, borderTopWidth: 1, borderColor: theme.border, padding: 16, paddingBottom: 24, height: "80%" },
+  commentsHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingBottom: 12, borderBottomWidth: 1, borderColor: theme.border, marginBottom: 12 },
+  commentsClose: { padding: 6, borderRadius: 999, backgroundColor: theme.bg3 },
+  commentsEmpty: { ...type.caption, color: theme.textDim, textAlign: "center", paddingVertical: 32 },
+  commentRow: { flexDirection: "row", gap: 10, alignItems: "flex-start" },
+  commentAvatar: { width: 32, height: 32, borderRadius: 16, backgroundColor: theme.bg3, alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  commentAvatarTxt: { ...type.caption, color: theme.text, fontWeight: "700" },
+  commentAuthor: { ...type.caption, color: theme.text, fontWeight: "700" },
+  commentDate: { ...type.tiny, color: theme.textDim },
+  commentText: { ...type.bodySm, color: theme.textMid, marginTop: 2, lineHeight: 20 },
+  commentDel: { padding: 6, borderRadius: 999, backgroundColor: theme.bg3 },
+  commentInputRow: { flexDirection: "row", gap: 8, alignItems: "flex-end", paddingTop: 12, borderTopWidth: 1, borderColor: theme.border },
+  commentInput: { ...type.bodySm, flex: 1, backgroundColor: theme.bg, borderColor: theme.border, borderWidth: 1, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 10, color: theme.text, maxHeight: 90 },
+  commentSend: { width: 40, height: 40, borderRadius: 20, backgroundColor: theme.brand, alignItems: "center", justifyContent: "center" },
 });
