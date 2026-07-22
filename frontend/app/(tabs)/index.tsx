@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { View, Text, StyleSheet, ScrollView, Pressable, RefreshControl, ActivityIndicator, Image, ImageBackground, FlatList } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import { useAuth } from "@/src/context/AuthContext";
 import { theme } from "@/src/theme";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -31,6 +31,7 @@ export default function Home() {
   }, [fetchApi]);
 
   useEffect(() => { load().finally(() => setLoading(false)); }, [load]);
+  useFocusEffect(useCallback(() => { load(); }, [load]));
   const onRefresh = async () => { setRefreshing(true); try { await load(); } finally { setRefreshing(false); } };
 
   const toggleLike = async (pid: string) => {
