@@ -54,14 +54,14 @@ export default function Chat() {
         <Pressable testID="chat-back" onPress={() => router.back()} style={{ padding: 6 }}>
           <Ionicons name="chevron-back" size={22} color={theme.text} />
         </Pressable>
-        <View style={styles.avatar}>
+        <Pressable testID="chat-avatar" onPress={() => id && router.push(`/user/${id}`)} style={styles.avatar}>
           {other?.avatar_url ? <Image source={{ uri: other.avatar_url }} style={{ width: "100%", height: "100%" }} /> :
             <Text style={styles.avTxt}>{other?.full_name?.[0]}</Text>}
-        </View>
-        <View style={{ flex: 1 }}>
+        </Pressable>
+        <Pressable onPress={() => id && router.push(`/user/${id}`)} style={{ flex: 1 }}>
           <Text style={styles.title}>{other?.full_name}</Text>
           <Text style={styles.sub}>{other?.verified ? "Verified" : "Active"}</Text>
-        </View>
+        </Pressable>
       </View>
 
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }} keyboardVerticalOffset={80}>

@@ -1,14 +1,16 @@
 import { useEffect, useState, useCallback } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, RefreshControl, ActivityIndicator, Image, ImageBackground, FlatList } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable, RefreshControl, ActivityIndicator, Image, ImageBackground, TextInput, Modal, KeyboardAvoidingView, Platform } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { router, useFocusEffect } from "expo-router";
 import { useAuth } from "@/src/context/AuthContext";
 import { theme, type } from "@/src/theme";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { formatDate, formatRelative } from "@/src/utils/date";
+import { confirmDelete } from "@/src/utils/confirm";
 
 type Post = {
-  id: string; author_name: string; author_avatar?: string | null;
+  id: string; author_id: string; author_name: string; author_avatar?: string | null;
   text: string; media_url?: string | null; media_type?: string | null;
   like_count: number; comment_count: number; liked: boolean; created_at: string;
 };
@@ -37,6 +39,34 @@ export default function Home() {
   const toggleLike = async (pid: string) => {
     setPosts(prev => prev.map(p => p.id === pid ? { ...p, liked: !p.liked, like_count: p.like_count + (p.liked ? -1 : 1) } : p));
     try { await fetchApi(`/posts/${pid}/like`, { method: "POST" }); } catch {}
+  };
+
+  // Post editing (owner-only) — reuses one modal for all posts
+  const [editingPost, setEditingPost] = useState<Post | null>(null);
+  const [editText, setEditText] = useState("");
+  const [savingEdit, setSavingEdit] = useState(false);
+
+  const openEdit = (p: Post) => { setEditingPost(p); setEditText(p.text); };
+  const saveEdit = async () => {
+    if (!editingPost) return;
+    setSavingEdit(true);
+    try {
+      await fetchApi(`/posts/${editingPost.id}`, { method: "PATCH", body: JSON.stringify({ text: editText }) });
+      setEditingPost(null);
+      await load();
+    } catch {}
+    finally { setSavingEdit(false); }
+  };
+  const deletePost = async (p: Post) => {
+    if (!(await confirmDelete("Delete post?", "This action cannot be undone."))) return;
+    setPosts(prev => prev.filter(x => x.id !== p.id));
+    try { await fetchApi(`/posts/${p.id}`, { method: "DELETE" }); } catch { await load(); }
+  };
+
+  const goAuthor = (authorId: string) => {
+    if (!authorId) return;
+    if (authorId === user?.id) router.push("/(tabs)/profile");
+    else router.push(`/user/${authorId}`);
   };
 
   if (loading) return <SafeAreaView style={styles.bg}><View style={styles.center}><ActivityIndicator color={theme.brand} /></View></SafeAreaView>;
@@ -95,7 +125,7 @@ export default function Home() {
                   <ImageBackground source={{ uri: g.cover_url }} style={StyleSheet.absoluteFill} imageStyle={{ borderRadius: theme.radius.md }} />
                   <LinearGradient colors={["transparent", "rgba(9,9,11,0.95)"]} style={[StyleSheet.absoluteFill, { borderRadius: theme.radius.md }]} />
                   <View style={styles.upInner}>
-                    <Text style={styles.upDate}>{g.date}</Text>
+                    <Text style={styles.upDate}>{formatDate(g.date)}</Text>
                     <Text style={styles.upTitle} numberOfLines={1}>{g.title}</Text>
                   </View>
                 </Pressable>
@@ -138,14 +168,24 @@ export default function Home() {
           {posts.map(p => (
             <View key={p.id} style={styles.postCard} testID={`post-${p.id}`}>
               <View style={styles.postHead}>
-                <View style={styles.postAvatar}>
+                <Pressable testID={`post-author-${p.id}`} onPress={() => goAuthor(p.author_id)} style={styles.postAvatar}>
                   {p.author_avatar ? <Image source={{ uri: p.author_avatar }} style={{ width: "100%", height: "100%" }} /> :
                     <Text style={{ color: theme.text, fontWeight: "700" }}>{p.author_name[0]}</Text>}
-                </View>
-                <View style={{ flex: 1 }}>
+                </Pressable>
+                <Pressable onPress={() => goAuthor(p.author_id)} style={{ flex: 1 }}>
                   <Text style={styles.postAuthor}>{p.author_name}</Text>
-                  <Text style={styles.postTime}>{new Date(p.created_at).toLocaleDateString()}</Text>
-                </View>
+                  <Text style={styles.postTime}>{formatRelative(p.created_at)}</Text>
+                </Pressable>
+                {p.author_id === user?.id && (
+                  <View style={{ flexDirection: "row", gap: 4 }}>
+                    <Pressable testID={`post-edit-${p.id}`} onPress={() => openEdit(p)} style={styles.postMenuBtn}>
+                      <Ionicons name="create-outline" size={16} color={theme.textDim} />
+                    </Pressable>
+                    <Pressable testID={`post-delete-${p.id}`} onPress={() => deletePost(p)} style={styles.postMenuBtn}>
+                      <Ionicons name="trash-outline" size={16} color={theme.error} />
+                    </Pressable>
+                  </View>
+                )}
               </View>
               <Text style={styles.postText}>{p.text}</Text>
               {p.media_url && (
@@ -168,6 +208,29 @@ export default function Home() {
           ))}
         </View>
       </ScrollView>
+
+      {/* Edit-post modal */}
+      <Modal transparent visible={!!editingPost} animationType="fade" onRequestClose={() => setEditingPost(null)}>
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={styles.modalBg}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Edit post</Text>
+            <TextInput
+              testID="edit-post-input"
+              style={styles.modalInput} value={editText} onChangeText={setEditText}
+              multiline placeholder="Update your post…" placeholderTextColor={theme.textDim}
+            />
+            <View style={{ flexDirection: "row", gap: 10, marginTop: 12 }}>
+              <Pressable onPress={() => setEditingPost(null)} style={[styles.modalBtn, { backgroundColor: theme.bg3 }]}>
+                <Text style={styles.modalBtnTxt}>Cancel</Text>
+              </Pressable>
+              <Pressable testID="edit-post-save" onPress={saveEdit} disabled={savingEdit} style={[styles.modalBtn, { backgroundColor: theme.brand }]}>
+                {savingEdit ? <ActivityIndicator color="#fff" size="small" /> :
+                  <Text style={[styles.modalBtnTxt, { color: "#fff" }]}>Save</Text>}
+              </Pressable>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -206,4 +269,11 @@ const styles = StyleSheet.create({
   postActions: { flexDirection: "row", gap: 20, marginTop: 12 },
   postAction: { flexDirection: "row", alignItems: "center", gap: 5 },
   postActionTxt: { ...type.caption, color: theme.textDim, fontWeight: "600" },
+  postMenuBtn: { padding: 6, borderRadius: 999, backgroundColor: theme.bg3 },
+  modalBg: { flex: 1, backgroundColor: "rgba(0,0,0,0.7)", justifyContent: "center", padding: 20 },
+  modalCard: { backgroundColor: theme.bg2, borderRadius: theme.radius.lg, padding: 20, borderWidth: 1, borderColor: theme.border },
+  modalTitle: { ...type.titleLg, color: theme.text, fontWeight: "800", marginBottom: 12 },
+  modalInput: { ...type.bodySm, backgroundColor: theme.bg, borderColor: theme.border, borderWidth: 1, borderRadius: theme.radius.md, padding: 12, color: theme.text, minHeight: 100, textAlignVertical: "top" },
+  modalBtn: { flex: 1, paddingVertical: 12, borderRadius: theme.radius.pill, alignItems: "center" },
+  modalBtnTxt: { ...type.label, color: theme.text, fontWeight: "700" },
 });

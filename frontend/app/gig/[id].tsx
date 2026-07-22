@@ -7,6 +7,7 @@ import { useAuth } from "@/src/context/AuthContext";
 import { theme, type } from "@/src/theme";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
+import { formatDate } from "@/src/utils/date";
 
 export default function GigDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -73,7 +74,7 @@ export default function GigDetail() {
 
           <View style={styles.metaGrid}>
             <View style={styles.metaCard}><Ionicons name="location-outline" size={18} color={theme.brand} /><Text style={styles.metaLbl}>City</Text><Text style={styles.metaVal}>{g.city}</Text></View>
-            <View style={styles.metaCard}><Ionicons name="calendar-outline" size={18} color={theme.brand} /><Text style={styles.metaLbl}>Date</Text><Text style={styles.metaVal}>{g.date}</Text></View>
+            <View style={styles.metaCard}><Ionicons name="calendar-outline" size={18} color={theme.brand} /><Text style={styles.metaLbl}>Date</Text><Text style={styles.metaVal}>{formatDate(g.date)}</Text></View>
             <View style={styles.metaCard}><Ionicons name="musical-notes-outline" size={18} color={theme.brand} /><Text style={styles.metaLbl}>Genre</Text><Text style={styles.metaVal}>{g.genre}</Text></View>
             <View style={styles.metaCard}><Ionicons name="mic-outline" size={18} color={theme.brand} /><Text style={styles.metaLbl}>Need</Text><Text style={styles.metaVal}>{g.instrument_needed}</Text></View>
           </View>
@@ -82,13 +83,14 @@ export default function GigDetail() {
           <Text style={styles.desc}>{g.description}</Text>
 
           <Text style={styles.sTitle}>Organizer</Text>
-          <View style={styles.orgCard}>
+          <Pressable testID="gig-organizer" onPress={() => data.organizer_user?.id && router.push(`/user/${data.organizer_user.id}`)} style={styles.orgCard}>
             <View style={styles.orgAvatar}><Ionicons name="business" size={20} color={theme.brand} /></View>
             <View style={{ flex: 1 }}>
               <Text style={styles.orgName}>{data.organizer_profile?.org_name || data.organizer_user?.full_name}</Text>
               <Text style={styles.orgMeta}>{data.applications_count} applicant{data.applications_count === 1 ? "" : "s"}</Text>
             </View>
-          </View>
+            <Ionicons name="chevron-forward" size={18} color={theme.textDim} />
+          </Pressable>
 
           {isMusician && !applied && (
             <>

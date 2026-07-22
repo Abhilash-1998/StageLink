@@ -253,6 +253,11 @@ class CommentIn(BaseModel):
     post_id: str
     text: str
 
+class PostUpdate(BaseModel):
+    text: Optional[str] = None
+    media_url: Optional[str] = None
+    media_type: Optional[Literal['image', 'video']] = None
+
 # ================== Helpers ==================
 def now_iso():
     return datetime.now(timezone.utc).isoformat()
@@ -1235,6 +1240,66 @@ async def add_comment(inp: CommentIn, u=Depends(get_user)):
     await db.posts.update_one({'id': inp.post_id}, {'$inc': {'comment_count': 1}})
     doc.pop('_id', None)
     return doc
+
+@api.patch("/posts/{pid}")
+async def edit_post(pid: str, inp: PostUpdate, u=Depends(get_user)):
+    p = await db.posts.find_one({'id': pid})
+    if not p: raise HTTPException(404, "Not found")
+    if p['author_id'] != u['id']: raise HTTPException(403, "Not your post")
+    patch = {k: v for k, v in inp.dict(exclude_unset=True).items() if v is not None}
+    if not patch: raise HTTPException(400, "Nothing to update")
+    patch['updated_at'] = now_iso()
+    await db.posts.update_one({'id': pid}, {'$set': patch})
+    updated = await db.posts.find_one({'id': pid}, {'_id': 0})
+    return updated
+
+@api.delete("/posts/{pid}")
+async def delete_post(pid: str, u=Depends(get_user)):
+    p = await db.posts.find_one({'id': pid})
+    if not p: raise HTTPException(404, "Not found")
+    if p['author_id'] != u['id']: raise HTTPException(403, "Not your post")
+    await db.posts.delete_one({'id': pid})
+    await db.comments.delete_many({'post_id': pid})
+    await db.likes.delete_many({'post_id': pid})
+    return {'deleted': True}
+
+@api.delete("/comments/{cid}")
+async def delete_comment(cid: str, u=Depends(get_user)):
+    c = await db.comments.find_one({'id': cid})
+    if not c: raise HTTPException(404, "Not found")
+    if c['author_id'] != u['id']: raise HTTPException(403, "Not your comment")
+    await db.comments.delete_one({'id': cid})
+    await db.posts.update_one({'id': c['post_id']}, {'$inc': {'comment_count': -1}})
+    return {'deleted': True}
+
+async def _delete_owned(collection, owner_field: str, item_id: str, uid: str):
+    doc = await collection.find_one({'id': item_id})
+    if not doc: raise HTTPException(404, "Not found")
+    if doc.get(owner_field) != uid: raise HTTPException(403, "Not yours to delete")
+    await collection.delete_one({'id': item_id})
+    return {'deleted': True}
+
+@api.delete("/gigs/{gid}")
+async def delete_gig(gid: str, u=Depends(get_user)):
+    r = await _delete_owned(db.gigs, 'organizer_id', gid, u['id'])
+    await db.applications.delete_many({'gig_id': gid})
+    return r
+
+@api.delete("/bands/{bid}")
+async def delete_band(bid: str, u=Depends(get_user)):
+    return await _delete_owned(db.bands, 'owner_id', bid, u['id'])
+
+@api.delete("/equipment/{eid}")
+async def delete_equipment(eid: str, u=Depends(get_user)):
+    return await _delete_owned(db.equipment, 'owner_id', eid, u['id'])
+
+@api.delete("/studios/{sid}")
+async def delete_studio(sid: str, u=Depends(get_user)):
+    return await _delete_owned(db.studios, 'owner_id', sid, u['id'])
+
+@api.delete("/lessons/{lid}")
+async def delete_lesson(lid: str, u=Depends(get_user)):
+    return await _delete_owned(db.lessons, 'teacher_id', lid, u['id'])
 
 @api.post("/follow/{target_id}")
 async def toggle_follow(target_id: str, u=Depends(get_user)):

@@ -178,7 +178,7 @@ export default function Create() {
               <TextInput testID="eq-title" style={styles.input} value={title} onChangeText={setTitle} placeholder="Fender Stratocaster (2019)" placeholderTextColor={theme.textDim} />
               <Text style={styles.label}>Category</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pillRow}>
-                {["Guitar", "Bass", "Keys", "Drums", "Mic", "DJ", "Amp", "Mixer"].map(c => (
+                {EQUIPMENT_CATEGORIES.map(c => (
                   <Pressable key={c} testID={`eq-cat-${c}`} onPress={() => setCategory(c)} style={[styles.pill, category === c && styles.pillOn]}>
                     <Text style={[styles.pillTxt, category === c && styles.pillTxtOn]}>{c}</Text>
                   </Pressable>
@@ -212,7 +212,7 @@ export default function Create() {
               <TextInput testID="lesson-title" style={styles.input} value={title} onChangeText={setTitle} placeholder="Contemporary Guitar 101" placeholderTextColor={theme.textDim} />
               <Text style={styles.label}>Subject</Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pillRow}>
-                {["Vocals", "Guitar", "Piano", "Drums", "Bass", "Theory", "Production"].map(c => (
+                {LESSON_SUBJECTS.map(c => (
                   <Pressable key={c} testID={`lesson-subj-${c}`} onPress={() => setCategory(c)} style={[styles.pill, category === c && styles.pillOn]}>
                     <Text style={[styles.pillTxt, category === c && styles.pillTxtOn]}>{c}</Text>
                   </Pressable>

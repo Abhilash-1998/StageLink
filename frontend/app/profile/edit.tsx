@@ -9,25 +9,8 @@ import { theme, type } from "@/src/theme";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { MediaPickerSheet, PickedMedia } from "@/src/components/MediaPickerSheet";
 import { MediaViewer } from "@/src/components/MediaViewer";
-
-const GENRES = ["Jazz", "Pop", "Rock", "Indie", "EDM", "Classical", "Fusion", "R&B", "Soul", "House", "Bollywood", "Carnatic", "Hindustani"];
-const INSTRUMENTS = ["Vocals", "Guitar", "Keyboard", "Violin", "Drums", "Bass", "DJ Deck", "Saxophone", "Tabla", "Sitar"];
-const PROFESSIONS = ["Singer", "Guitarist", "Drummer", "Keyboardist", "Violinist", "DJ", "Music Producer", "Sound Engineer", "Vocal Coach", "Composer", "Music Teacher", "Event Host"];
-const SKILLS = ["Live Performance", "Music Production", "Recording", "Mixing", "Mastering", "Song Writing", "Improvisation", "Session Work"];
-const LANGUAGES = ["English", "Hindi", "Marathi", "Tamil", "Telugu", "Kannada", "Punjabi", "Bengali"];
-const AVATAR_CHOICES = [
-  "https://images.unsplash.com/photo-1516280440614-37939bbacd81?w=400",
-  "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=400",
-  "https://images.unsplash.com/photo-1509228468518-180dd4864904?w=400",
-  "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=400",
-  "https://images.unsplash.com/photo-1520785643438-5bf77931f493?w=400",
-];
-const COVER_CHOICES = [
-  "https://images.unsplash.com/photo-1415201364774-f6f0bb35f28f?w=1200",
-  "https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=1200",
-  "https://images.unsplash.com/photo-1533174072545-7a4b6ad7a6c3?w=1200",
-  "https://images.unsplash.com/photo-1429962714451-bb934ecdc4ec?w=1200",
-];
+import { GENRES, INSTRUMENTS, PROFESSIONS, SKILLS, LANGUAGES, AVATAR_CHOICES, COVER_CHOICES } from "@/src/data/options";
+import { confirmDelete } from "@/src/utils/confirm";
 
 export default function EditProfile() {
   const { user, fetchApi, refreshUser } = useAuth();
@@ -139,6 +122,7 @@ export default function EditProfile() {
   };
 
   const removePortfolio = async (id: string) => {
+    if (!(await confirmDelete("Delete this portfolio item?"))) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
     await fetchApi(`/profile/portfolio/${id}`, { method: "DELETE" });
     await load();
@@ -155,6 +139,7 @@ export default function EditProfile() {
 
   const bulkDelete = async () => {
     if (selection.size === 0) return;
+    if (!(await confirmDelete(`Delete ${selection.size} item${selection.size === 1 ? "" : "s"}?`))) return;
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
     const ids = Array.from(selection);
     await Promise.all(ids.map(id => fetchApi(`/profile/portfolio/${id}`, { method: "DELETE" })));
@@ -215,6 +200,7 @@ export default function EditProfile() {
   };
 
   const removeService = async (id: string) => {
+    if (!(await confirmDelete("Delete this service?"))) return;
     await fetchApi(`/profile/services/${id}`, { method: "DELETE" });
     await load();
   };

@@ -5,6 +5,7 @@ import { router } from "expo-router";
 import { useAuth } from "@/src/context/AuthContext";
 import { theme, type } from "@/src/theme";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { formatRelative } from "@/src/utils/date";
 
 type Thread = {
   user: { id: string; full_name: string; avatar_url?: string | null };
@@ -44,24 +45,26 @@ export default function Messages() {
         contentContainerStyle={{ paddingBottom: 130 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.brand} />}
         renderItem={({ item }) => (
-          <Pressable testID={`thread-${item.user.id}`} onPress={() => router.push(`/chat/${item.user.id}`)} style={styles.thread}>
-            <View style={styles.avatar}>
+          <View style={styles.thread} testID={`thread-row-${item.user.id}`}>
+            <Pressable testID={`thread-avatar-${item.user.id}`} onPress={() => router.push(`/user/${item.user.id}`)} style={styles.avatar}>
               {item.user.avatar_url ? <Image source={{ uri: item.user.avatar_url }} style={{ width: "100%", height: "100%" }} /> :
                 <Text style={styles.avTxt}>{item.user.full_name[0]}</Text>}
-            </View>
-            <View style={{ flex: 1 }}>
-              <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
-                <Text style={styles.name}>{item.user.full_name}</Text>
-                <Text style={styles.time}>{new Date(item.last_message.created_at).toLocaleDateString()}</Text>
+            </Pressable>
+            <Pressable testID={`thread-${item.user.id}`} onPress={() => router.push(`/chat/${item.user.id}`)} style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 12 }}>
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+                  <Text style={styles.name}>{item.user.full_name}</Text>
+                  <Text style={styles.time}>{formatRelative(item.last_message.created_at)}</Text>
+                </View>
+                <Text style={[styles.preview, item.unread > 0 && { color: theme.text, fontWeight: "600" }]} numberOfLines={1}>
+                  {item.last_message.from_id === user?.id ? "You: " : ""}{item.last_message.text}
+                </Text>
               </View>
-              <Text style={[styles.preview, item.unread > 0 && { color: theme.text, fontWeight: "600" }]} numberOfLines={1}>
-                {item.last_message.from_id === user?.id ? "You: " : ""}{item.last_message.text}
-              </Text>
-            </View>
-            {item.unread > 0 && (
-              <View style={styles.badge}><Text style={styles.badgeTxt}>{item.unread}</Text></View>
-            )}
-          </Pressable>
+              {item.unread > 0 && (
+                <View style={styles.badge}><Text style={styles.badgeTxt}>{item.unread}</Text></View>
+              )}
+            </Pressable>
+          </View>
         )}
         ListEmptyComponent={
           <View style={styles.empty}>

@@ -6,25 +6,31 @@ import { router, useFocusEffect } from "expo-router";
 import { useAuth } from "@/src/context/AuthContext";
 import { theme, type } from "@/src/theme";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { MediaViewer } from "@/src/components/MediaViewer";
+import { confirmDelete } from "@/src/utils/confirm";
+import { formatDate, formatRelative } from "@/src/utils/date";
 
+/**
+ * Unified professional profile — StageLink v1.
+ * A user is a professional, not a role. This screen aggregates every entity
+ * they own (portfolio, services, equipment, studios, bands, lessons, gigs,
+ * community posts) into a single cohesive experience.
+ * No role switch, no PRO/premium UI (payment features hidden for v1).
+ */
 export default function ProfileTab() {
-  const { user, fetchApi, logout, refreshUser } = useAuth();
+  const { user, fetchApi, logout } = useAuth();
   const [profile, setProfile] = useState<any>(null);
   const [completion, setCompletion] = useState<any>(null);
   const [entities, setEntities] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [switching, setSwitching] = useState(false);
-
-  const isMusician = user?.active_role === "musician";
-  const hasBoth = (user?.roles?.length || 0) >= 2;
+  const [tab, setTab] = useState<"grid" | "posts" | "listings">("grid");
+  const [viewer, setViewer] = useState<{ items: any[]; idx: number } | null>(null);
 
   const load = useCallback(async () => {
     if (!user) return;
-    const url = user.active_role === "organizer"
-      ? `/profile/organizer/${user.id}` : `/profile/musician/${user.id}`;
     try {
       const [p, c, e] = await Promise.all([
-        fetchApi(url).catch(() => null),
+        fetchApi(`/profile/musician/${user.id}`).catch(() => null),
         fetchApi("/profile/completion").catch(() => null),
         fetchApi("/entities/mine").catch(() => null),
       ]);
@@ -35,27 +41,35 @@ export default function ProfileTab() {
   useEffect(() => { load(); }, [load]);
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
-  const switchRole = async (r: "musician" | "organizer") => {
-    if (user?.active_role === r) return;
-    setSwitching(true);
-    try {
-      await fetchApi("/auth/active-role", { method: "POST", body: JSON.stringify({ active_role: r }) });
-      await refreshUser();
-    } finally { setSwitching(false); }
+  const removeEntity = async (path: string) => {
+    if (!(await confirmDelete())) return;
+    try { await fetchApi(path, { method: "DELETE" }); await load(); }
+    catch (e: any) { /* swallow; UI still refreshes */ await load(); }
   };
 
   if (loading) return <SafeAreaView style={styles.bg}><View style={styles.center}><ActivityIndicator color={theme.brand} /></View></SafeAreaView>;
 
   const p = profile?.profile || {};
   const initials = user?.full_name?.split(" ").slice(0, 2).map(n => n[0]).join("").toUpperCase();
-  const portfolioItems: any[] = p.portfolio_items || [];
+  const portfolio: any[] = p.portfolio_items || [];
   const services: any[] = p.services || [];
-  const totalListings = (entities?.gigs?.length || 0) + (entities?.bands?.length || 0)
-                      + (entities?.equipment?.length || 0) + (entities?.studios?.length || 0)
-                      + (entities?.lessons?.length || 0);
+  const posts: any[] = entities?.posts || [];
+  const gigs: any[] = entities?.gigs || [];
+  const bands: any[] = entities?.bands || [];
+  const equipment: any[] = entities?.equipment || [];
+  const studios: any[] = entities?.studios || [];
+  const lessons: any[] = entities?.lessons || [];
+
+  const photos = portfolio.filter(x => x.media_type === "image");
+  const videos = portfolio.filter(x => x.media_type === "video");
+  const totalListings = gigs.length + bands.length + equipment.length + studios.length + lessons.length;
   const pct = completion?.completion ?? 0;
 
   const openLink = (u?: string) => u && Linking.openURL(u).catch(() => {});
+  const openViewer = (items: any[], idx: number) => setViewer({
+    items: items.map(x => ({ uri: x.media_url, type: x.media_type, title: x.title })),
+    idx,
+  });
 
   return (
     <SafeAreaView style={styles.bg} edges={["top"]}>
@@ -70,6 +84,7 @@ export default function ProfileTab() {
           }
         </View>
 
+        {/* Header */}
         <View style={styles.headerRow}>
           <View style={styles.avatar}>
             {user?.avatar_url ? <Image source={{ uri: user.avatar_url }} style={styles.avatarImg} /> :
@@ -79,7 +94,6 @@ export default function ProfileTab() {
             <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
               <Text style={styles.name}>{user?.full_name}</Text>
               {user?.verified && <Ionicons name="checkmark-circle" size={16} color={theme.brand} />}
-              {user?.premium && <View style={styles.proTag}><Text style={styles.proTagTxt}>PRO</Text></View>}
             </View>
             {p.tagline ? <Text style={styles.tagline}>{p.tagline}</Text> :
               <Text style={styles.role}>{p.city || "—"}{p.experience_years ? ` · ${p.experience_years}y` : ""}</Text>}
@@ -98,30 +112,25 @@ export default function ProfileTab() {
           </Pressable>
         </View>
 
-        {/* Role switcher */}
-        {hasBoth && (
-          <View style={styles.switcher}>
-            <Pressable testID="role-musician-btn" disabled={switching} onPress={() => switchRole("musician")} style={[styles.switchBtn, isMusician && styles.switchOn]}>
-              <Ionicons name="musical-notes" size={14} color={isMusician ? "#fff" : theme.textDim} />
-              <Text style={[styles.switchTxt, isMusician && styles.switchTxtOn]}>Musician</Text>
-            </Pressable>
-            <Pressable testID="role-organizer-btn" disabled={switching} onPress={() => switchRole("organizer")} style={[styles.switchBtn, !isMusician && styles.switchOn]}>
-              <Ionicons name="megaphone" size={14} color={!isMusician ? "#fff" : theme.textDim} />
-              <Text style={[styles.switchTxt, !isMusician && styles.switchTxtOn]}>Organizer</Text>
-            </Pressable>
-          </View>
-        )}
+        {/* Stats bar — Instagram-style Followers / Following / Reviews */}
+        <View style={styles.statsBar}>
+          <View style={styles.stat}><Text style={styles.statNum}>{profile?.rating ?? "0.0"}</Text><Text style={styles.statLbl}>★ Rating</Text></View>
+          <View style={styles.statDiv} />
+          <View style={styles.stat}><Text style={styles.statNum}>{profile?.review_count ?? 0}</Text><Text style={styles.statLbl}>Reviews</Text></View>
+          <View style={styles.statDiv} />
+          <View style={styles.stat}><Text style={styles.statNum}>{profile?.followers ?? 0}</Text><Text style={styles.statLbl}>Followers</Text></View>
+          <View style={styles.statDiv} />
+          <View style={styles.stat}><Text style={styles.statNum}>{profile?.following ?? 0}</Text><Text style={styles.statLbl}>Following</Text></View>
+        </View>
 
         {/* Completion */}
-        {isMusician && pct < 100 && completion && (
+        {pct < 100 && completion && (
           <Pressable testID="completion-card" onPress={() => router.push("/profile/edit")} style={styles.compCard}>
             <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
               <Text style={styles.compTitle}>Profile {pct}% complete</Text>
               <Ionicons name="chevron-forward" size={18} color={theme.brand} />
             </View>
-            <View style={styles.compBar}>
-              <View style={[styles.compBarFill, { width: `${pct}%` }]} />
-            </View>
+            <View style={styles.compBar}><View style={[styles.compBarFill, { width: `${pct}%` }]} /></View>
             {completion.suggestions?.slice(0, 2).map((s: any) => (
               <View key={s.field} style={styles.suggRow}>
                 <Ionicons name="add-circle-outline" size={14} color={theme.brand} />
@@ -129,19 +138,6 @@ export default function ProfileTab() {
               </View>
             ))}
           </Pressable>
-        )}
-
-        {/* Stats */}
-        {isMusician && (
-          <View style={styles.statsBar}>
-            <View style={styles.stat}><Text style={styles.statNum}>{profile?.rating || "0.0"}</Text><Text style={styles.statLbl}>★ Rating</Text></View>
-            <View style={styles.statDiv} />
-            <View style={styles.stat}><Text style={styles.statNum}>{profile?.review_count || 0}</Text><Text style={styles.statLbl}>Reviews</Text></View>
-            <View style={styles.statDiv} />
-            <View style={styles.stat}><Text style={styles.statNum}>{profile?.reliability || 0}%</Text><Text style={styles.statLbl}>Reliable</Text></View>
-            <View style={styles.statDiv} />
-            <View style={styles.stat}><Text style={styles.statNum}>{profile?.followers || 0}</Text><Text style={styles.statLbl}>Followers</Text></View>
-          </View>
         )}
 
         {/* About */}
@@ -155,13 +151,13 @@ export default function ProfileTab() {
           </View>
         )}
 
-        {/* Genres + Instruments */}
-        {isMusician && (p.genres?.length > 0 || p.instruments?.length > 0) && (
+        {/* Style */}
+        {(p.genres?.length > 0 || p.instruments?.length > 0) && (
           <View style={styles.section}>
             <Text style={styles.sTitle}>Style</Text>
             <View style={styles.chipRow}>
-              {p.genres?.map((g: string) => <View key={g} style={styles.tag}><Text style={styles.tagTxt}>{g}</Text></View>)}
-              {p.instruments?.map((g: string) => <View key={g} style={styles.tag}><Text style={styles.tagTxt}>{g}</Text></View>)}
+              {p.genres?.map((g: string) => <View key={`g-${g}`} style={styles.tag}><Text style={styles.tagTxt}>{g}</Text></View>)}
+              {p.instruments?.map((g: string) => <View key={`i-${g}`} style={styles.tag}><Text style={styles.tagTxt}>{g}</Text></View>)}
             </View>
           </View>
         )}
@@ -174,7 +170,7 @@ export default function ProfileTab() {
           </View>
         )}
 
-        {/* Pricing */}
+        {/* Base rate — informational only, not transactional */}
         {p.pricing_per_hour > 0 && !p.hide_pricing && (
           <View style={styles.section}>
             <Text style={styles.sTitle}>Base rate</Text>
@@ -195,8 +191,11 @@ export default function ProfileTab() {
                     {s.duration && <Text style={styles.serviceDur}>{s.duration}</Text>}
                   </View>
                   <View style={{ alignItems: "flex-end" }}>
-                    <Text style={styles.servicePrice}>₹{s.price.toLocaleString("en-IN")}</Text>
-                    <Text style={styles.servicePricing}>{s.pricing_type.replace("_", " ")}</Text>
+                    <Text style={styles.servicePrice}>₹{s.price?.toLocaleString("en-IN")}</Text>
+                    <Text style={styles.servicePricing}>{s.pricing_type?.replace("_", " ")}</Text>
+                    <Pressable testID={`svc-del-${s.id}`} onPress={() => removeEntity(`/profile/services/${s.id}`)} style={styles.delMini}>
+                      <Ionicons name="trash-outline" size={13} color={theme.error} />
+                    </Pressable>
                   </View>
                 </View>
               ))}
@@ -204,25 +203,125 @@ export default function ProfileTab() {
           </View>
         )}
 
-        {/* Portfolio */}
-        {portfolioItems.length > 0 && (
+        {/* Media tabs — Grid / Videos / Posts */}
+        {(photos.length > 0 || videos.length > 0 || posts.length > 0) && (
           <View style={styles.section}>
-            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-              <Text style={styles.sTitle}>Portfolio</Text>
-              <Text style={styles.count}>{portfolioItems.length} item{portfolioItems.length === 1 ? "" : "s"}</Text>
+            <View style={styles.tabRow}>
+              <Pressable testID="tab-grid" onPress={() => setTab("grid")} style={[styles.tabBtn, tab === "grid" && styles.tabBtnOn]}>
+                <Ionicons name="grid-outline" size={16} color={tab === "grid" ? theme.text : theme.textDim} />
+                <Text style={[styles.tabTxt, tab === "grid" && styles.tabTxtOn]}>Media ({portfolio.length})</Text>
+              </Pressable>
+              <Pressable testID="tab-posts" onPress={() => setTab("posts")} style={[styles.tabBtn, tab === "posts" && styles.tabBtnOn]}>
+                <Ionicons name="chatbubbles-outline" size={16} color={tab === "posts" ? theme.text : theme.textDim} />
+                <Text style={[styles.tabTxt, tab === "posts" && styles.tabTxtOn]}>Posts ({posts.length})</Text>
+              </Pressable>
+              <Pressable testID="tab-listings" onPress={() => setTab("listings")} style={[styles.tabBtn, tab === "listings" && styles.tabBtnOn]}>
+                <Ionicons name="albums-outline" size={16} color={tab === "listings" ? theme.text : theme.textDim} />
+                <Text style={[styles.tabTxt, tab === "listings" && styles.tabTxtOn]}>Listings ({totalListings})</Text>
+              </Pressable>
             </View>
-            <View style={styles.portGrid}>
-              {portfolioItems.slice(0, 6).map(it => (
-                <View key={it.id} style={styles.portItem} testID={`portfolio-${it.id}`}>
-                  <ImageBackground source={{ uri: it.thumbnail_url || it.media_url }} style={StyleSheet.absoluteFill} imageStyle={{ borderRadius: theme.radius.md }} />
-                  <LinearGradient colors={["transparent", "rgba(9,9,11,0.9)"]} style={[StyleSheet.absoluteFill, { borderRadius: theme.radius.md }]} />
-                  <View style={styles.portOverlay}>
-                    {it.media_type === "video" && <Ionicons name="play-circle" size={22} color="#fff" style={{ marginBottom: 4 }} />}
-                    <Text style={styles.portTitle} numberOfLines={2}>{it.title}</Text>
+
+            {tab === "grid" && (
+              <View style={styles.mediaGrid}>
+                {portfolio.map((it, i) => (
+                  <Pressable key={it.id} testID={`media-${it.id}`} onPress={() => openViewer(portfolio, i)} style={styles.mediaTile}>
+                    <Image source={{ uri: it.thumbnail_url || it.media_url }} style={StyleSheet.absoluteFill as any} resizeMode="cover" />
+                    {it.media_type === "video" && (
+                      <View style={styles.playBadge}><Ionicons name="play-circle" size={26} color="#fff" /></View>
+                    )}
+                  </Pressable>
+                ))}
+                {portfolio.length === 0 && <Text style={styles.emptyLine}>No media yet.</Text>}
+              </View>
+            )}
+
+            {tab === "posts" && (
+              <View style={{ gap: 10, marginTop: 8 }}>
+                {posts.length === 0 && <Text style={styles.emptyLine}>No community posts yet.</Text>}
+                {posts.map(post => (
+                  <View key={post.id} style={styles.postCard} testID={`own-post-${post.id}`}>
+                    <View style={styles.postHead}>
+                      <Text style={styles.postDate}>{formatRelative(post.created_at)}</Text>
+                      <Pressable testID={`post-del-${post.id}`} onPress={() => removeEntity(`/posts/${post.id}`)} style={styles.delMini}>
+                        <Ionicons name="trash-outline" size={13} color={theme.error} />
+                      </Pressable>
+                    </View>
+                    <Text style={styles.postTxt} numberOfLines={4}>{post.text}</Text>
+                    {post.media_url && <Image source={{ uri: post.media_url }} style={styles.postThumb} />}
+                    <View style={{ flexDirection: "row", gap: 14, marginTop: 8 }}>
+                      <Text style={styles.postMeta}>❤ {post.like_count || 0}</Text>
+                      <Text style={styles.postMeta}>💬 {post.comment_count || 0}</Text>
+                    </View>
                   </View>
-                </View>
-              ))}
-            </View>
+                ))}
+              </View>
+            )}
+
+            {tab === "listings" && (
+              <View style={{ gap: 10, marginTop: 8 }}>
+                {totalListings === 0 && <Text style={styles.emptyLine}>No listings yet — create one from the + tab.</Text>}
+                {gigs.map((g: any) => (
+                  <Pressable key={g.id} onPress={() => router.push(`/gig/${g.id}`)} style={styles.listRow} testID={`list-gig-${g.id}`}>
+                    <View style={styles.listIcon}><Ionicons name="megaphone" size={16} color={theme.brand} /></View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.listTitle}>{g.title}</Text>
+                      <Text style={styles.listMeta}>Gig · {g.city} · {formatDate(g.date)}</Text>
+                    </View>
+                    <Pressable testID={`gig-del-${g.id}`} onPress={() => removeEntity(`/gigs/${g.id}`)} style={styles.delMini}>
+                      <Ionicons name="trash-outline" size={14} color={theme.error} />
+                    </Pressable>
+                  </Pressable>
+                ))}
+                {bands.map((b: any) => (
+                  <View key={b.id} style={styles.listRow} testID={`list-band-${b.id}`}>
+                    <View style={styles.listIcon}><Ionicons name="people" size={16} color={theme.brand} /></View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.listTitle}>{b.name}</Text>
+                      <Text style={styles.listMeta}>Band · {b.city}</Text>
+                    </View>
+                    <Pressable testID={`band-del-${b.id}`} onPress={() => removeEntity(`/bands/${b.id}`)} style={styles.delMini}>
+                      <Ionicons name="trash-outline" size={14} color={theme.error} />
+                    </Pressable>
+                  </View>
+                ))}
+                {equipment.map((e: any) => (
+                  <View key={e.id} style={styles.listRow} testID={`list-eq-${e.id}`}>
+                    <View style={styles.listIcon}><Ionicons name="cube" size={16} color={theme.brand} /></View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.listTitle}>{e.title}</Text>
+                      <Text style={styles.listMeta}>Equipment · ₹{e.price?.toLocaleString("en-IN")}{e.listing_type === "rent" ? "/day" : ""}</Text>
+                    </View>
+                    <Pressable testID={`eq-del-${e.id}`} onPress={() => removeEntity(`/equipment/${e.id}`)} style={styles.delMini}>
+                      <Ionicons name="trash-outline" size={14} color={theme.error} />
+                    </Pressable>
+                  </View>
+                ))}
+                {studios.map((s: any) => (
+                  <View key={s.id} style={styles.listRow} testID={`list-studio-${s.id}`}>
+                    <View style={styles.listIcon}><Ionicons name="mic" size={16} color={theme.brand} /></View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.listTitle}>{s.name}</Text>
+                      <Text style={styles.listMeta}>Studio · {s.city} · ₹{s.hourly_rate?.toLocaleString("en-IN")}/hr</Text>
+                    </View>
+                    <Pressable testID={`studio-del-${s.id}`} onPress={() => removeEntity(`/studios/${s.id}`)} style={styles.delMini}>
+                      <Ionicons name="trash-outline" size={14} color={theme.error} />
+                    </Pressable>
+                  </View>
+                ))}
+                {lessons.map((l: any) => (
+                  <View key={l.id} style={styles.listRow} testID={`list-lesson-${l.id}`}>
+                    <View style={styles.listIcon}><Ionicons name="school" size={16} color={theme.brand} /></View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.listTitle}>{l.title}</Text>
+                      <Text style={styles.listMeta}>Lesson · {l.subject} · ₹{l.price_per_hour?.toLocaleString("en-IN")}/hr</Text>
+                    </View>
+                    <Pressable testID={`lesson-del-${l.id}`} onPress={() => removeEntity(`/lessons/${l.id}`)} style={styles.delMini}>
+                      <Ionicons name="trash-outline" size={14} color={theme.error} />
+                    </Pressable>
+                  </View>
+                ))}
+              </View>
+            )}
           </View>
         )}
 
@@ -245,25 +344,12 @@ export default function ProfileTab() {
         <View style={{ padding: 20, gap: 10, marginTop: 4 }}>
           <Pressable testID="go-applications" onPress={() => router.push("/(tabs)/applications")} style={styles.rowBtn}>
             <Ionicons name="briefcase-outline" size={18} color={theme.text} />
-            <Text style={styles.rowBtnTxt}>My applications & gigs</Text>
+            <Text style={styles.rowBtnTxt}>Applications & gigs</Text>
             <Ionicons name="chevron-forward" size={18} color={theme.textDim} />
           </Pressable>
           <Pressable testID="go-dashboard" onPress={() => router.push("/(tabs)/dashboard")} style={styles.rowBtn}>
             <Ionicons name="stats-chart-outline" size={18} color={theme.text} />
-            <Text style={styles.rowBtnTxt}>Insights & analytics</Text>
-            <Ionicons name="chevron-forward" size={18} color={theme.textDim} />
-          </Pressable>
-          {totalListings > 0 && (
-            <Pressable testID="my-listings" onPress={() => router.push("/(tabs)/discover")} style={styles.rowBtn}>
-              <Ionicons name="grid-outline" size={18} color={theme.text} />
-              <Text style={styles.rowBtnTxt}>My listings</Text>
-              <View style={styles.countBadge}><Text style={styles.countBadgeTxt}>{totalListings}</Text></View>
-              <Ionicons name="chevron-forward" size={18} color={theme.textDim} />
-            </Pressable>
-          )}
-          <Pressable testID="go-subscription" onPress={() => router.push("/subscription")} style={styles.rowBtn}>
-            <Ionicons name="diamond-outline" size={18} color={theme.brand} />
-            <Text style={styles.rowBtnTxt}>Upgrade to Pro</Text>
+            <Text style={styles.rowBtnTxt}>Insights</Text>
             <Ionicons name="chevron-forward" size={18} color={theme.textDim} />
           </Pressable>
           <Pressable testID="logout-btn" onPress={async () => { await logout(); }} style={[styles.rowBtn, { borderColor: theme.error }]}>
@@ -273,6 +359,10 @@ export default function ProfileTab() {
           </Pressable>
         </View>
       </ScrollView>
+
+      {viewer && (
+        <MediaViewer visible items={viewer.items} initialIndex={viewer.idx} onClose={() => setViewer(null)} />
+      )}
     </SafeAreaView>
   );
 }
@@ -288,31 +378,23 @@ const styles = StyleSheet.create({
   name: { ...type.h2, color: theme.text },
   tagline: { ...type.caption, color: theme.brand, marginTop: 4, fontWeight: "600" },
   role: { ...type.caption, color: theme.textDim, marginTop: 4 },
-  proTag: { backgroundColor: theme.brand, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
-  proTagTxt: { ...type.badge, color: "#fff" },
   actionRow: { flexDirection: "row", gap: 10, paddingHorizontal: 20, marginTop: 16 },
   actionBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, backgroundColor: theme.bg2, borderRadius: theme.radius.pill, paddingVertical: 11, borderWidth: 1, borderColor: theme.border },
   actionBtnTxt: { ...type.caption, color: theme.text, fontWeight: "700" },
-  switcher: { flexDirection: "row", marginHorizontal: 20, marginTop: 16, backgroundColor: theme.bg2, borderRadius: theme.radius.pill, padding: 4, borderWidth: 1, borderColor: theme.border },
-  switchBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 10, borderRadius: theme.radius.pill },
-  switchOn: { backgroundColor: theme.brand },
-  switchTxt: { ...type.caption, color: theme.textDim, fontWeight: "600" },
-  switchTxtOn: { ...type.caption, color: "#fff", fontWeight: "700" },
+  statsBar: { flexDirection: "row", marginHorizontal: 20, marginTop: 20, backgroundColor: theme.bg2, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.border, paddingVertical: 14 },
+  stat: { flex: 1, alignItems: "center" },
+  statNum: { ...type.titleLg, color: theme.text, fontWeight: "800" },
+  statLbl: { ...type.tiny, color: theme.textDim, marginTop: 3 },
+  statDiv: { width: 1, backgroundColor: theme.border },
   compCard: { marginHorizontal: 20, marginTop: 20, padding: 16, backgroundColor: theme.brandTint, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.brand },
   compTitle: { ...type.bodySm, color: theme.text, fontWeight: "700" },
   compBar: { height: 6, backgroundColor: theme.bg3, borderRadius: 3, marginTop: 10, overflow: "hidden" },
   compBarFill: { height: 6, backgroundColor: theme.brand, borderRadius: 3 },
   suggRow: { flexDirection: "row", alignItems: "center", gap: 6, marginTop: 8 },
   suggTxt: { ...type.caption, color: theme.textMid },
-  statsBar: { flexDirection: "row", marginHorizontal: 20, marginTop: 20, backgroundColor: theme.bg2, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.border, paddingVertical: 14 },
-  stat: { flex: 1, alignItems: "center" },
-  statNum: { ...type.titleLg, color: theme.text, fontWeight: "800" },
-  statLbl: { ...type.tiny, color: theme.textDim, marginTop: 3 },
-  statDiv: { width: 1, backgroundColor: theme.border },
   section: { paddingHorizontal: 20, marginTop: 22 },
   sTitle: { ...type.titleMd, color: theme.text, fontWeight: "700", marginBottom: 8 },
   bio: { ...type.bodySm, color: theme.textMid, lineHeight: 21 },
-  count: { ...type.caption, color: theme.textDim },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   tag: { backgroundColor: theme.bg2, borderRadius: theme.radius.pill, paddingHorizontal: 12, paddingVertical: 6, borderWidth: 1, borderColor: theme.border },
   tagTxt: { ...type.caption, color: theme.textMid, fontWeight: "500" },
@@ -325,14 +407,28 @@ const styles = StyleSheet.create({
   serviceDur: { ...type.tiny, color: theme.textDim, marginTop: 4 },
   servicePrice: { ...type.titleMd, color: theme.brand, fontWeight: "800" },
   servicePricing: { ...type.tiny, color: theme.textDim, marginTop: 2 },
-  portGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  portItem: { width: "31.5%", aspectRatio: 1, borderRadius: theme.radius.md, overflow: "hidden" },
-  portOverlay: { position: "absolute", bottom: 6, left: 6, right: 6, alignItems: "flex-start" },
-  portTitle: { ...type.tiny, color: theme.text, fontWeight: "700" },
+  tabRow: { flexDirection: "row", backgroundColor: theme.bg2, borderRadius: theme.radius.pill, padding: 4, borderWidth: 1, borderColor: theme.border, marginBottom: 12 },
+  tabBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, paddingVertical: 9, borderRadius: theme.radius.pill },
+  tabBtnOn: { backgroundColor: theme.brand },
+  tabTxt: { ...type.tiny, color: theme.textDim, fontWeight: "700" },
+  tabTxtOn: { color: "#fff" },
+  mediaGrid: { flexDirection: "row", flexWrap: "wrap", gap: 3 },
+  mediaTile: { width: "32.7%", aspectRatio: 1, backgroundColor: theme.bg2, overflow: "hidden" },
+  playBadge: { position: "absolute", top: "50%", left: "50%", marginLeft: -13, marginTop: -13 },
+  emptyLine: { ...type.caption, color: theme.textDim, textAlign: "center", paddingVertical: 20 },
+  postCard: { backgroundColor: theme.bg2, borderRadius: theme.radius.md, padding: 12, borderWidth: 1, borderColor: theme.border },
+  postHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 },
+  postDate: { ...type.tiny, color: theme.textDim },
+  postTxt: { ...type.bodySm, color: theme.text, lineHeight: 20 },
+  postThumb: { width: "100%", height: 160, borderRadius: theme.radius.md, marginTop: 8 },
+  postMeta: { ...type.tiny, color: theme.textDim },
+  listRow: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: theme.bg2, padding: 12, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.border },
+  listIcon: { width: 36, height: 36, borderRadius: 10, backgroundColor: theme.brandTint, alignItems: "center", justifyContent: "center" },
+  listTitle: { ...type.bodySm, color: theme.text, fontWeight: "700" },
+  listMeta: { ...type.tiny, color: theme.textDim, marginTop: 2 },
+  delMini: { padding: 8, borderRadius: theme.radius.md, backgroundColor: theme.bg3 },
   socialRow: { flexDirection: "row", gap: 10, flexWrap: "wrap" },
   socialBtn: { width: 42, height: 42, borderRadius: 21, backgroundColor: theme.bg2, borderWidth: 1, borderColor: theme.border, alignItems: "center", justifyContent: "center" },
   rowBtn: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: theme.bg2, borderRadius: theme.radius.lg, padding: 16, borderWidth: 1, borderColor: theme.border },
   rowBtnTxt: { ...type.bodySm, color: theme.text, fontWeight: "600", flex: 1 },
-  countBadge: { backgroundColor: theme.brandTint, borderColor: theme.brand, borderWidth: 1, paddingHorizontal: 8, paddingVertical: 2, borderRadius: theme.radius.pill },
-  countBadgeTxt: { ...type.tiny, color: theme.brand, fontWeight: "700" },
 });

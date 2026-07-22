@@ -6,6 +6,7 @@ import { router } from "expo-router";
 import { useAuth } from "@/src/context/AuthContext";
 import { theme, type } from "@/src/theme";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { formatDate } from "@/src/utils/date";
 
 type EntityType = "Gigs" | "Musicians" | "Bands" | "Studios" | "Equipment" | "Lessons" | "Venues";
 const TYPES: EntityType[] = ["Gigs", "Musicians", "Bands", "Studios", "Equipment", "Lessons", "Venues"];
@@ -46,14 +47,14 @@ export default function Discover() {
             </ImageBackground>
             <View style={styles.body}>
               <Text style={styles.title} numberOfLines={1}>{item.title}</Text>
-              <Text style={styles.meta}>{item.city} · {item.date}</Text>
+              <Text style={styles.meta}>{item.city} · {formatDate(item.date)}</Text>
               <Text style={styles.price}>₹{item.budget?.toLocaleString("en-IN")}</Text>
             </View>
           </Pressable>
         );
       case "Musicians":
         return (
-          <Pressable testID={`disc-mus-${item.user.id}`} onPress={() => router.push(`/musician/${item.user.id}`)} style={styles.card}>
+          <Pressable testID={`disc-mus-${item.user.id}`} onPress={() => router.push(`/user/${item.user.id}`)} style={styles.card}>
             {item.profile.cover_url && (
               <ImageBackground source={{ uri: item.profile.cover_url }} style={{ height: 100 }} imageStyle={{ borderTopLeftRadius: theme.radius.lg, borderTopRightRadius: theme.radius.lg }}>
                 <LinearGradient colors={["transparent", "rgba(9,9,11,0.9)"]} style={StyleSheet.absoluteFill} />

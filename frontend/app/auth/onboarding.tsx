@@ -4,9 +4,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@/src/context/AuthContext";
 import { theme, type } from "@/src/theme";
 import { SafeAreaView } from "react-native-safe-area-context";
-
-const CITIES = ["Mumbai", "Bengaluru", "Delhi", "Pune", "Hyderabad", "Chennai", "Kolkata"];
-const INTERESTS = ["Perform", "Hire talent", "Sell equipment", "Rent equipment", "Teach", "Book studios", "Build a band"];
+import { CITIES, INTERESTS } from "@/src/data/options";
 
 // Single, welcoming profile builder. No role gate — action-based model means
 // users pick what they want to do later from the Create tab.

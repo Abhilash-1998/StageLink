@@ -5,6 +5,7 @@ import { router } from "expo-router";
 import { useAuth } from "@/src/context/AuthContext";
 import { theme, type } from "@/src/theme";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { formatDate } from "@/src/utils/date";
 
 export default function Applications() {
   const { user, fetchApi } = useAuth();
@@ -41,7 +42,7 @@ export default function Applications() {
               <Pressable testID={`org-gig-${item.id}`} onPress={() => router.push(`/gig/${item.id}`)} style={styles.card}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.title}>{item.title}</Text>
-                  <Text style={styles.meta}>{item.city} · {item.date}</Text>
+                  <Text style={styles.meta}>{item.city} · {formatDate(item.date)}</Text>
                   <View style={styles.badgeRow}>
                     <View style={styles.badge}><Ionicons name="people" size={11} color={theme.text} /><Text style={styles.badgeTxt}>{item.applications_count} applicants</Text></View>
                     <Text style={styles.price}>₹{item.budget.toLocaleString("en-IN")}</Text>
@@ -57,7 +58,7 @@ export default function Applications() {
             <Pressable testID={`app-${a.id}`} onPress={() => router.push(`/gig/${g.id}`)} style={styles.card}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.title}>{g.title}</Text>
-                <Text style={styles.meta}>{g.city} · {g.date}</Text>
+                <Text style={styles.meta}>{g.city} · {formatDate(g.date)}</Text>
                 <View style={styles.badgeRow}>
                   <View style={[styles.badge, { backgroundColor: `${color}22`, borderColor: color }]}>
                     <Text style={[styles.badgeTxt, { color }]}>{a.status.toUpperCase()}</Text>

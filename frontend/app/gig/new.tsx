@@ -5,17 +5,8 @@ import { router } from "expo-router";
 import { useAuth } from "@/src/context/AuthContext";
 import { theme, type } from "@/src/theme";
 import { SafeAreaView } from "react-native-safe-area-context";
-
-const GENRES = ["Jazz", "Pop", "Rock", "Indie", "EDM", "Classical", "Fusion", "R&B", "Soul"];
-const INSTRS = ["Vocals", "Guitar", "Keyboard", "Violin", "Drums", "DJ Deck"];
-const TYPES = ["wedding", "corporate", "club", "festival", "private"];
-
-const COVERS = [
-  "https://images.unsplash.com/photo-1415201364774-f6f0bb35f28f?w=800",
-  "https://images.unsplash.com/photo-1470229722913-7c0e2dbbafd3?w=800",
-  "https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=800",
-  "https://images.unsplash.com/photo-1519741497674-611481863552?w=800",
-];
+import { GENRES, INSTRUMENTS as INSTRS, EVENT_TYPES as TYPES, GIG_COVERS as COVERS } from "@/src/data/options";
+import { parseDDMMYYYY } from "@/src/utils/date";
 
 export default function NewGig() {
   const { fetchApi } = useAuth();
@@ -36,11 +27,13 @@ export default function NewGig() {
     if (!title.trim() || !city.trim() || !date.trim() || !budget.trim() || !desc.trim()) {
       setErr("Please fill all required fields"); return;
     }
+    const iso = parseDDMMYYYY(date.trim());
+    if (!iso) { setErr("Date must be DD/MM/YYYY (e.g. 15/06/2026)"); return; }
     setLoading(true);
     try {
       const g: any = await fetchApi("/gigs", {
         method: "POST", body: JSON.stringify({
-          title, city, date, event_type: type, genre, instrument_needed: instr,
+          title, city, date: iso, event_type: type, genre, instrument_needed: instr,
           budget: parseInt(budget), description: desc, cover_url: cover,
         }),
       });
@@ -62,8 +55,8 @@ export default function NewGig() {
           <TextInput testID="new-title" style={styles.input} value={title} onChangeText={setTitle} placeholder="Rooftop Jazz Night" placeholderTextColor={theme.textDim} />
           <Text style={styles.label}>City</Text>
           <TextInput testID="new-city" style={styles.input} value={city} onChangeText={setCity} placeholder="Mumbai" placeholderTextColor={theme.textDim} />
-          <Text style={styles.label}>Date (YYYY-MM-DD)</Text>
-          <TextInput testID="new-date" style={styles.input} value={date} onChangeText={setDate} placeholder="2026-06-15" placeholderTextColor={theme.textDim} />
+          <Text style={styles.label}>Date (DD/MM/YYYY)</Text>
+          <TextInput testID="new-date" style={styles.input} value={date} onChangeText={setDate} placeholder="15/06/2026" placeholderTextColor={theme.textDim} />
           <Text style={styles.label}>Event type</Text>
           <View style={styles.chipRow}>{TYPES.map(t => (
             <Pressable key={t} testID={`type-${t}`} onPress={() => setType(t)} style={[styles.chip, type === t && styles.chipOn]}><Text style={[styles.chipTxt, type === t && styles.chipTxtOn]}>{t}</Text></Pressable>

@@ -55,19 +55,18 @@ export default function Dashboard() {
         <View style={{ paddingHorizontal: 20, marginTop: 24 }}>
           <Text style={styles.sectionTitle}>Quick actions</Text>
           <View style={{ gap: 10, marginTop: 12 }}>
-            {isOrg ? (
+            {isOrg && (
               <Pressable testID="quick-create-gig" onPress={() => router.push("/gig/new")} style={styles.action}>
                 <View style={styles.actionIcon}><Ionicons name="add-circle" size={22} color={theme.brand} /></View>
                 <View style={{ flex: 1 }}><Text style={styles.actionTitle}>Post a new gig</Text><Text style={styles.actionSub}>Publish and receive applications instantly</Text></View>
                 <Ionicons name="chevron-forward" size={18} color={theme.textDim} />
               </Pressable>
-            ) : (
-              <Pressable testID="quick-subscription" onPress={() => router.push("/subscription")} style={styles.action}>
-                <View style={styles.actionIcon}><Ionicons name="diamond" size={20} color={theme.brand} /></View>
-                <View style={{ flex: 1 }}><Text style={styles.actionTitle}>Go Premium</Text><Text style={styles.actionSub}>Featured profile, unlimited applications, AI contracts</Text></View>
-                <Ionicons name="chevron-forward" size={18} color={theme.textDim} />
-              </Pressable>
             )}
+            <Pressable testID="quick-create-post" onPress={() => router.push("/(tabs)/create")} style={styles.action}>
+              <View style={styles.actionIcon}><Ionicons name="megaphone" size={20} color={theme.brand} /></View>
+              <View style={{ flex: 1 }}><Text style={styles.actionTitle}>Share to community</Text><Text style={styles.actionSub}>Post updates, performances, or thoughts</Text></View>
+              <Ionicons name="chevron-forward" size={18} color={theme.textDim} />
+            </Pressable>
           </View>
         </View>
       </ScrollView>
