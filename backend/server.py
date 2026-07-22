@@ -437,11 +437,14 @@ async def add_portfolio_item(inp: PortfolioItemIn, u=Depends(get_user)):
 
 @api.delete("/profile/portfolio/{item_id}")
 async def delete_portfolio_item(item_id: str, u=Depends(get_user)):
+    before = await db.musicians.find_one({'user_id': u['id']}, {'portfolio_items': 1}) or {}
     r = await db.musicians.update_one(
         {'user_id': u['id']},
         {'$pull': {'portfolio_items': {'id': item_id}}, '$set': {'updated_at': now_iso()}},
     )
-    return {'deleted': r.modified_count}
+    after = await db.musicians.find_one({'user_id': u['id']}, {'portfolio_items': 1}) or {}
+    deleted = len(before.get('portfolio_items') or []) - len(after.get('portfolio_items') or [])
+    return {'deleted': max(deleted, 0)}
 
 @api.post("/profile/services")
 async def add_service(inp: ServiceIn, u=Depends(get_user)):
@@ -457,11 +460,14 @@ async def add_service(inp: ServiceIn, u=Depends(get_user)):
 
 @api.delete("/profile/services/{svc_id}")
 async def delete_service(svc_id: str, u=Depends(get_user)):
+    before = await db.musicians.find_one({'user_id': u['id']}, {'services': 1}) or {}
     r = await db.musicians.update_one(
         {'user_id': u['id']},
         {'$pull': {'services': {'id': svc_id}}, '$set': {'updated_at': now_iso()}},
     )
-    return {'deleted': r.modified_count}
+    after = await db.musicians.find_one({'user_id': u['id']}, {'services': 1}) or {}
+    deleted = len(before.get('services') or []) - len(after.get('services') or [])
+    return {'deleted': max(deleted, 0)}
 
 def _compute_completion(m: dict) -> dict:
     checks = [

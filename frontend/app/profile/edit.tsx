@@ -70,7 +70,7 @@ export default function EditProfile() {
       });
       await refreshUser();
       setMsg("Saved");
-      setTimeout(() => setMsg(null), 1500);
+      setTimeout(() => setMsg(null), 2200);
     } catch (e: any) { setErr(e.message); }
     finally { setSaving(false); }
   };
