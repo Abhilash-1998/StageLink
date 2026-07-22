@@ -129,15 +129,20 @@ export function ProfileView({
           )}
         </View>
 
-        {/* Stats bar — identical for own and public */}
+        {/* Stats bar — Rating and Reviews are informational; Followers/Following
+            open the shared /user/[id]/connections screen. */}
         <View style={styles.statsBar}>
           <View style={styles.stat}><Text style={styles.statNum}>{profile?.rating ?? "0.0"}</Text><Text style={styles.statLbl}>★ Rating</Text></View>
           <View style={styles.statDiv} />
           <View style={styles.stat}><Text style={styles.statNum}>{profile?.review_count ?? 0}</Text><Text style={styles.statLbl}>Reviews</Text></View>
           <View style={styles.statDiv} />
-          <View style={styles.stat}><Text style={styles.statNum}>{profile?.followers ?? 0}</Text><Text style={styles.statLbl}>Followers</Text></View>
+          <Pressable testID="stat-followers" onPress={() => u.id && router.push(`/user/${u.id}/connections?tab=followers`)} style={styles.stat}>
+            <Text style={styles.statNum}>{profile?.followers ?? 0}</Text><Text style={styles.statLbl}>Followers</Text>
+          </Pressable>
           <View style={styles.statDiv} />
-          <View style={styles.stat}><Text style={styles.statNum}>{profile?.following ?? 0}</Text><Text style={styles.statLbl}>Following</Text></View>
+          <Pressable testID="stat-following" onPress={() => u.id && router.push(`/user/${u.id}/connections?tab=following`)} style={styles.stat}>
+            <Text style={styles.statNum}>{profile?.following ?? 0}</Text><Text style={styles.statLbl}>Following</Text>
+          </Pressable>
         </View>
 
         {/* Completion — own only */}

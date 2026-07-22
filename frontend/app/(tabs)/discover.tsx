@@ -7,9 +7,9 @@ import { useAuth } from "@/src/context/AuthContext";
 import { theme, type } from "@/src/theme";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { formatDate } from "@/src/utils/date";
+import { ENTITY_TYPES, EntityType } from "@/src/data/options";
 
-type EntityType = "Gigs" | "Musicians" | "Bands" | "Studios" | "Equipment" | "Lessons" | "Venues";
-const TYPES: EntityType[] = ["Gigs", "Musicians", "Bands", "Studios", "Equipment", "Lessons", "Venues"];
+const TYPES: readonly EntityType[] = ENTITY_TYPES;
 
 const ENDPOINTS: Record<EntityType, string> = {
   Gigs: "/gigs", Musicians: "/musicians", Bands: "/bands",

@@ -5,6 +5,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@/src/context/AuthContext";
 import { theme, type } from "@/src/theme";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { ROLE_CARD_IMAGES } from "@/src/data/options";
 
 type Choice = "musician" | "organizer" | "both";
 
@@ -13,9 +14,9 @@ const OPTIONS: { key: Choice; label: string; desc: string; img: string; icon: an
     img: "https://images.pexels.com/photos/18368848/pexels-photo-18368848.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
     icon: "musical-notes" },
   { key: "organizer", label: "I Hire Musicians", desc: "Post events, discover talent, manage bookings.",
-    img: "https://images.unsplash.com/photo-1459749411175-04bf5292ceea?w=800", icon: "megaphone" },
+    img: ROLE_CARD_IMAGES.organizer, icon: "megaphone" },
   { key: "both", label: "Both", desc: "Perform and hire. Switch anytime from your profile.",
-    img: "https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=800", icon: "infinite" },
+    img: ROLE_CARD_IMAGES.musician, icon: "infinite" },
 ];
 
 export default function RoleSelect() {

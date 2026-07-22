@@ -529,9 +529,10 @@ async def get_musician(user_id: str):
     rating = round(sum(r['rating'] for r in reviews) / len(reviews), 1) if reviews else 0
     reliability = min(100, 60 + len(reviews) * 4)
     followers = await db.follows.count_documents({'target_user_id': user_id})
+    following = await db.follows.count_documents({'follower_id': user_id})
     return {'user': user_public(u) if u else None, 'profile': m, 'rating': rating,
             'review_count': len(reviews), 'reliability': reliability, 'followers': followers,
-            'reviews': reviews[:10]}
+            'following': following, 'reviews': reviews[:10]}
 
 @api.get("/profile/organizer/{user_id}")
 async def get_organizer(user_id: str):
@@ -1312,6 +1313,34 @@ async def toggle_follow(target_id: str, u=Depends(get_user)):
     await db.follows.insert_one({'follower_id': u['id'], 'target_user_id': target_id,
                                  'created_at': now_iso()})
     return {'following': True}
+
+async def _users_summary(user_ids: list[str]):
+    if not user_ids: return []
+    cursor = db.users.find({'id': {'$in': user_ids}}, {'_id': 0, 'password_hash': 0})
+    users = await cursor.to_list(200)
+    # Preserve original order
+    by_id = {u['id']: u for u in users}
+    out = []
+    for uid in user_ids:
+        u = by_id.get(uid)
+        if not u: continue
+        m = await db.musicians.find_one({'user_id': uid}, {'_id': 0, 'tagline': 1, 'city': 1, 'user_id': 1})
+        out.append({
+            'id': u['id'], 'full_name': u.get('full_name'),
+            'avatar_url': u.get('avatar_url'), 'verified': u.get('verified', False),
+            'tagline': (m or {}).get('tagline'), 'city': (m or {}).get('city'),
+        })
+    return out
+
+@api.get("/users/{uid}/followers")
+async def list_followers(uid: str):
+    rows = await db.follows.find({'target_user_id': uid}, {'_id': 0}).sort('created_at', -1).to_list(200)
+    return await _users_summary([r['follower_id'] for r in rows])
+
+@api.get("/users/{uid}/following")
+async def list_following(uid: str):
+    rows = await db.follows.find({'follower_id': uid}, {'_id': 0}).sort('created_at', -1).to_list(200)
+    return await _users_summary([r['target_user_id'] for r in rows])
 
 @api.get("/entities/mine")
 async def my_entities(u=Depends(get_user)):

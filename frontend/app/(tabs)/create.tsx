@@ -7,6 +7,7 @@ import { useAuth } from "@/src/context/AuthContext";
 import { theme, type } from "@/src/theme";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { MediaPickerSheet, PickedMedia } from "@/src/components/MediaPickerSheet";
+import { EQUIPMENT_CATEGORIES, LESSON_SUBJECTS, DEFAULT_COVERS } from "@/src/data/options";
 
 type Action =
   | "post" | "hiring" | "band" | "equipment_rent" | "equipment_sale"
@@ -71,7 +72,7 @@ export default function Create() {
         if (!title.trim() || !city.trim()) throw new Error("Name and city required");
         await fetchApi("/bands", { method: "POST", body: JSON.stringify({
           name: title, city, description: desc, genres: [],
-          cover_url: "https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=800",
+          cover_url: DEFAULT_COVERS.band,
         })});
         setOk("Band created");
       } else if (action === "equipment_rent" || action === "equipment_sale") {
@@ -79,14 +80,14 @@ export default function Create() {
         await fetchApi("/equipment", { method: "POST", body: JSON.stringify({
           title, listing_type: action === "equipment_rent" ? "rent" : "sale",
           category, city, price: parseInt(price), description: desc,
-          cover_url: "https://images.unsplash.com/photo-1510915361894-db8b60106cb1?w=800",
+          cover_url: DEFAULT_COVERS.equipment,
         })});
         setOk("Listing published");
       } else if (action === "studio") {
         if (!title.trim() || !city.trim() || !price.trim()) throw new Error("Fill all fields");
         await fetchApi("/studios", { method: "POST", body: JSON.stringify({
           name: title, city, hourly_rate: parseInt(price), description: desc,
-          cover_url: "https://images.unsplash.com/photo-1598488035139-bdbb2231ce04?w=800",
+          cover_url: DEFAULT_COVERS.studio,
         })});
         setOk("Studio added");
       } else if (action === "lesson") {
@@ -94,7 +95,7 @@ export default function Create() {
         await fetchApi("/lessons", { method: "POST", body: JSON.stringify({
           title, subject: category, city, price_per_hour: parseInt(price), format: "both",
           description: desc,
-          cover_url: "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=800",
+          cover_url: DEFAULT_COVERS.lesson,
         })});
         setOk("Lesson listed");
       }

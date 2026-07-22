@@ -70,3 +70,20 @@ export const GIG_COVERS = [
   "https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=800",
   "https://images.unsplash.com/photo-1519741497674-611481863552?w=800",
 ];
+
+export const ENTITY_TYPES = ["Gigs", "Musicians", "Bands", "Studios", "Equipment", "Lessons", "Venues"] as const;
+export type EntityType = typeof ENTITY_TYPES[number];
+
+// Default cover images used when the user hasn't uploaded one at create time.
+export const DEFAULT_COVERS: Record<string, string> = {
+  band:      "https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=800",
+  equipment: "https://images.unsplash.com/photo-1510915361894-db8b60106cb1?w=800",
+  studio:    "https://images.unsplash.com/photo-1598488035139-bdbb2231ce04?w=800",
+  lesson:    "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=800",
+};
+
+// Role-affordance card art on the signup role screen.
+export const ROLE_CARD_IMAGES = {
+  organizer: "https://images.unsplash.com/photo-1459749411175-04bf5292ceea?w=800",
+  musician:  "https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=800",
+};
