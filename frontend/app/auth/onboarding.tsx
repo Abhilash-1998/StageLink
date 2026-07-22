@@ -131,7 +131,7 @@ export default function Onboarding() {
 
 const styles = StyleSheet.create({
   bg: { flex: 1, backgroundColor: theme.bg },
-  title: { ...type.h1, color: theme.text, fontSize: 28 },
+  title: { ...type.h1, color: theme.text },
   sub: { ...type.bodyMd, color: theme.textDim, marginTop: 6, marginBottom: 20 },
   label: { ...type.label, color: theme.textMid, marginBottom: 6, marginTop: 14 },
   input: { ...type.bodyMd, backgroundColor: theme.bg2, borderColor: theme.border, borderWidth: 1, borderRadius: theme.radius.md, paddingHorizontal: 14, paddingVertical: 12, color: theme.text, marginTop: 8 },
@@ -139,11 +139,11 @@ const styles = StyleSheet.create({
   chipWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 4 },
   chip: { flexShrink: 0, paddingHorizontal: 14, paddingVertical: 8, borderRadius: theme.radius.pill, backgroundColor: theme.bg2, borderWidth: 1, borderColor: theme.border },
   chipOn: { backgroundColor: theme.brandTint, borderColor: theme.brand },
-  chipTxt: { ...type.caption, color: theme.textDim, fontWeight: "500" },
-  chipTxtOn: { ...type.caption, color: theme.text, fontWeight: "600" },
+  chipTxt: { ...type.label, color: theme.textDim, fontWeight: "500" },
+  chipTxtOn: { ...type.label, color: theme.text },
   aiBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 6, borderRadius: theme.radius.pill, backgroundColor: theme.brandTint, borderWidth: 1, borderColor: theme.brand },
-  aiBtnTxt: { ...type.tiny, color: theme.brand, fontWeight: "600" },
+  aiBtnTxt: { ...type.label, color: theme.brand },
   cta: { backgroundColor: theme.brand, borderRadius: theme.radius.pill, paddingVertical: 16, marginTop: 28, alignItems: "center" },
-  ctaText: { ...type.titleMd, color: "#fff", fontWeight: "700" },
+  ctaText: { ...type.titleLg, color: "#fff" },
   err: { ...type.caption, color: theme.error, marginTop: 12 },
 });

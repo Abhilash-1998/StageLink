@@ -24,6 +24,6 @@ export default function Splash() {
 const styles = StyleSheet.create({
   bg: { flex: 1, backgroundColor: theme.bg },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
-  brand: { ...type.displayLg, color: theme.text, fontSize: 44 },
+  brand: { ...type.displayLg, color: theme.text },
   tag: { ...type.bodyMd, color: theme.textDim, marginTop: 8 },
 });

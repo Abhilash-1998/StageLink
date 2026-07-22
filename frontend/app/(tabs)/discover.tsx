@@ -177,7 +177,7 @@ const styles = StyleSheet.create({
   bg: { flex: 1, backgroundColor: theme.bg },
   center: { padding: 60, alignItems: "center", justifyContent: "center" },
   header: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 12 },
-  h1: { ...type.h1, color: theme.text, fontSize: 26 },
+  h1: { ...type.h1, color: theme.text },
   searchWrap: { flexDirection: "row", alignItems: "center", backgroundColor: theme.bg2, paddingHorizontal: 14, borderRadius: theme.radius.pill, borderWidth: 1, borderColor: theme.border, gap: 8, marginTop: 12 },
   search: { ...type.bodySm, flex: 1, color: theme.text, paddingVertical: 12 },
   chipRow: { paddingHorizontal: 20, gap: 8, paddingVertical: 8 },

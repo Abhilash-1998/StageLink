@@ -4,7 +4,7 @@ import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import * as ImageManipulator from "expo-image-manipulator";
 import * as Haptics from "expo-haptics";
-import { theme } from "@/src/theme";
+import { theme, type } from "@/src/theme";
 
 export type PickedMedia = {
   uri: string;              // data URI (base64) or file uri
@@ -163,16 +163,16 @@ const styles = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "flex-end" },
   sheet: { backgroundColor: theme.bg2, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 32, borderTopWidth: 1, borderColor: theme.border },
   grabber: { alignSelf: "center", width: 40, height: 4, borderRadius: 2, backgroundColor: theme.border, marginBottom: 12 },
-  title: { color: theme.text, fontSize: 18, fontWeight: "800" },
-  sub: { color: theme.textDim, fontSize: 13, marginTop: 4, marginBottom: 16 },
+  title: { ...type.titleLg, color: theme.text, fontWeight: "800" },
+  sub: { ...type.bodySm, color: theme.textDim, marginTop: 4, marginBottom: 16 },
   row: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: theme.bg, padding: 14, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.border, marginBottom: 8 },
   iconWrap: { width: 40, height: 40, borderRadius: 10, backgroundColor: theme.brandTint, alignItems: "center", justifyContent: "center" },
-  rowTitle: { color: theme.text, fontSize: 14, fontWeight: "700" },
-  rowSub: { color: theme.textDim, fontSize: 12, marginTop: 2 },
+  rowTitle: { ...type.bodySm, color: theme.text, fontWeight: "700" },
+  rowSub: { ...type.caption, color: theme.textDim, marginTop: 2 },
   cancel: { alignItems: "center", padding: 12, marginTop: 4 },
-  cancelTxt: { color: theme.textDim, fontSize: 14, fontWeight: "600" },
+  cancelTxt: { ...type.bodySm, color: theme.textDim, fontWeight: "600" },
   errBox: { padding: 12, borderRadius: theme.radius.md, backgroundColor: theme.brandTint, borderWidth: 1, borderColor: theme.brand, marginBottom: 12 },
-  errTxt: { color: theme.text, fontSize: 13 },
+  errTxt: { ...type.bodySm, color: theme.text },
   settingsBtn: { marginTop: 10, alignSelf: "flex-start", paddingHorizontal: 14, paddingVertical: 8, borderRadius: theme.radius.pill, backgroundColor: theme.brand },
-  settingsTxt: { color: "#fff", fontSize: 12, fontWeight: "700" },
+  settingsTxt: { ...type.caption, color: "#fff", fontWeight: "700" },
 });

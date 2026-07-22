@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { View, Text, StyleSheet, Modal, FlatList, Image, Dimensions, Pressable, StatusBar, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { theme } from "@/src/theme";
+import { theme, type } from "@/src/theme";
 
 const { width, height } = Dimensions.get("window");
 
@@ -63,7 +63,7 @@ const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: "#000" },
   close: { position: "absolute", top: 48, right: 16, width: 40, height: 40, borderRadius: 20, backgroundColor: "rgba(0,0,0,0.5)", alignItems: "center", justifyContent: "center" },
   footer: { position: "absolute", bottom: 32, left: 20, right: 20, alignItems: "center" },
-  title: { color: "#fff", fontSize: 14, fontWeight: "600", textAlign: "center", marginBottom: 6 },
-  count: { color: "rgba(255,255,255,0.6)", fontSize: 12 },
+  title: { ...type.label, color: "#fff", textAlign: "center", marginBottom: 6 },
+  count: { ...type.caption, color: "rgba(255,255,255,0.6)" },
   playHint: { position: "absolute", alignItems: "center", justifyContent: "center" },
 });

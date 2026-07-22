@@ -231,7 +231,7 @@ Seed runs automatically on empty DB — see `seed()` in `server.py`.
 
 ### Typography Scale (`src/theme.ts` → `type`)
 
-**Rule: no hardcoded `fontSize` or `fontWeight` anywhere in the frontend. Always compose from `type`.**
+**Rule: `fontSize` must always come from the `type` scale — never a numeric literal.** `fontWeight`, `letterSpacing`, and `lineHeight` overrides on top of a token are permitted for emphasis (e.g. `{ ...type.caption, fontWeight: "700" }`).
 
 ```ts
 import { type } from "@/src/theme";
@@ -256,6 +256,7 @@ import { type } from "@/src/theme";
 | `price`     | 20 / 800 / 26             | Prices |
 | `priceLg`   | 30 / 800 / 36             | Hero prices |
 | `stat`      | 22 / 800 / 28             | Dashboard numbers |
+| `badge`     | 10 / 800 / 12             | Tiny tag labels (PRO, BEST) |
 
 ### UX Principles
 

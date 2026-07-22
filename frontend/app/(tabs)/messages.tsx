@@ -79,7 +79,7 @@ const styles = StyleSheet.create({
   bg: { flex: 1, backgroundColor: theme.bg },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   header: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 16 },
-  h1: { ...type.h1, color: theme.text, fontSize: 26 },
+  h1: { ...type.h1, color: theme.text },
   sub: { ...type.caption, color: theme.textDim, marginTop: 4 },
   thread: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 20, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: theme.border },
   avatar: { width: 48, height: 48, borderRadius: 24, backgroundColor: theme.bg2, alignItems: "center", justifyContent: "center", overflow: "hidden" },

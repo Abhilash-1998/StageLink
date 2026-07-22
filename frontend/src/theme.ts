@@ -53,4 +53,7 @@ export const type = {
   price:   { fontSize: 20, fontWeight: "800" as W, letterSpacing: -0.3, lineHeight: 26 },
   priceLg: { fontSize: 30, fontWeight: "800" as W, letterSpacing: -0.5, lineHeight: 36 },
   stat:    { fontSize: 22, fontWeight: "800" as W, letterSpacing: -0.3, lineHeight: 28 },
+
+  // Badges — tiny bold tags like "PRO", "BEST"
+  badge:   { fontSize: 10, fontWeight: "800" as W, letterSpacing: 0.5, lineHeight: 12 },
 } as const;

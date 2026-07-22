@@ -2,7 +2,7 @@ import { Tabs } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
 import { StyleSheet, Platform, View } from "react-native";
-import { theme } from "@/src/theme";
+import { theme, type } from "@/src/theme";
 
 export default function TabsLayout() {
   return (
@@ -22,7 +22,7 @@ export default function TabsLayout() {
         ) : null,
         tabBarActiveTintColor: theme.text,
         tabBarInactiveTintColor: theme.textDim,
-        tabBarLabelStyle: { fontSize: 11, fontWeight: "600", letterSpacing: 0.1, marginBottom: 4 },
+        tabBarLabelStyle: { ...type.tiny, fontWeight: "600", marginBottom: 4 },
       }}
     >
       <Tabs.Screen name="index" options={{

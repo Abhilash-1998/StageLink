@@ -63,12 +63,12 @@ export default function Login() {
 const styles = StyleSheet.create({
   bg: { flex: 1, backgroundColor: theme.bg },
   container: { padding: 24, paddingTop: 32 },
-  title: { ...type.displayMd, color: theme.text, fontSize: 32 },
+  title: { ...type.displayMd, color: theme.text },
   sub: { ...type.bodyMd, color: theme.textDim, marginTop: 6, marginBottom: 32 },
   label: { ...type.label, color: theme.textMid, marginBottom: 6, marginTop: 12 },
   input: { ...type.bodyMd, backgroundColor: theme.bg2, borderColor: theme.border, borderWidth: 1, borderRadius: theme.radius.md, paddingHorizontal: 14, paddingVertical: 14, color: theme.text },
   cta: { backgroundColor: theme.brand, borderRadius: theme.radius.pill, paddingVertical: 16, marginTop: 28, alignItems: "center" },
-  ctaText: { ...type.titleMd, color: "#fff", fontWeight: "700", letterSpacing: 0.3 },
+  ctaText: { ...type.titleLg, color: "#fff" },
   err: { ...type.caption, color: theme.error, marginTop: 12 },
   link: { ...type.bodySm, color: theme.textDim },
 });
