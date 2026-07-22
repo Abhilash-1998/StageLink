@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, FlatList, TextInput, Pressable, ActivityIndicat
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, router } from "expo-router";
 import { useAuth } from "@/src/context/AuthContext";
-import { theme } from "@/src/theme";
+import { theme, type } from "@/src/theme";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 type Msg = { id: string; from_id: string; to_id: string; text: string; created_at: string };
@@ -104,14 +104,14 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   header: { flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: theme.border },
   avatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: theme.bg2, alignItems: "center", justifyContent: "center", overflow: "hidden" },
-  avTxt: { color: theme.text, fontWeight: "700" },
-  title: { color: theme.text, fontSize: 15, fontWeight: "700" },
-  sub: { color: theme.textDim, fontSize: 11, marginTop: 2 },
+  avTxt: { ...type.titleMd, color: theme.text, fontWeight: "700" },
+  title: { ...type.titleMd, color: theme.text, fontWeight: "700" },
+  sub: { ...type.tiny, color: theme.textDim, marginTop: 2 },
   bubble: { maxWidth: "78%", paddingHorizontal: 14, paddingVertical: 10, borderRadius: 18 },
   mine: { backgroundColor: theme.brand, borderBottomRightRadius: 4 },
   theirs: { backgroundColor: theme.bg2, borderBottomLeftRadius: 4, borderWidth: 1, borderColor: theme.border },
-  bubbleTxt: { color: theme.text, fontSize: 14, lineHeight: 20 },
+  bubbleTxt: { ...type.bodySm, color: theme.text },
   inputRow: { flexDirection: "row", gap: 8, paddingHorizontal: 12, paddingBottom: 12, paddingTop: 8, borderTopWidth: 1, borderTopColor: theme.border, backgroundColor: theme.bg, alignItems: "flex-end" },
-  input: { flex: 1, backgroundColor: theme.bg2, borderColor: theme.border, borderWidth: 1, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 10, color: theme.text, fontSize: 14, maxHeight: 100 },
+  input: { ...type.bodySm, flex: 1, backgroundColor: theme.bg2, borderColor: theme.border, borderWidth: 1, borderRadius: 20, paddingHorizontal: 14, paddingVertical: 10, color: theme.text, maxHeight: 100 },
   send: { width: 40, height: 40, borderRadius: 20, backgroundColor: theme.brand, alignItems: "center", justifyContent: "center" },
 });

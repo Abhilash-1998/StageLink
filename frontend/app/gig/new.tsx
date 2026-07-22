@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, ScrollView, TextInput, Pressable, ActivityIndic
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useAuth } from "@/src/context/AuthContext";
-import { theme } from "@/src/theme";
+import { theme, type } from "@/src/theme";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 const GENRES = ["Jazz", "Pop", "Rock", "Indie", "EDM", "Classical", "Fusion", "R&B", "Soul"];
@@ -105,16 +105,16 @@ export default function NewGig() {
 const styles = StyleSheet.create({
   bg: { flex: 1, backgroundColor: theme.bg },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 20, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: theme.border },
-  h1: { color: theme.text, fontSize: 18, fontWeight: "700" },
-  label: { color: theme.textMid, fontSize: 13, fontWeight: "600", marginTop: 16, marginBottom: 6 },
-  input: { backgroundColor: theme.bg2, borderColor: theme.border, borderWidth: 1, borderRadius: theme.radius.md, paddingHorizontal: 14, paddingVertical: 12, color: theme.text, fontSize: 14 },
+  h1: { ...type.titleLg, color: theme.text, fontWeight: "700" },
+  label: { ...type.label, color: theme.textMid, marginTop: 16, marginBottom: 6 },
+  input: { ...type.bodySm, backgroundColor: theme.bg2, borderColor: theme.border, borderWidth: 1, borderRadius: theme.radius.md, paddingHorizontal: 14, paddingVertical: 12, color: theme.text },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   chip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: theme.radius.pill, backgroundColor: theme.bg2, borderWidth: 1, borderColor: theme.border },
   chipOn: { backgroundColor: theme.brandTint, borderColor: theme.brand },
-  chipTxt: { color: theme.textDim, fontSize: 12, fontWeight: "500", textTransform: "capitalize" },
-  chipTxtOn: { color: theme.text, fontWeight: "700" },
+  chipTxt: { ...type.caption, color: theme.textDim, fontWeight: "500", textTransform: "capitalize" },
+  chipTxtOn: { ...type.caption, color: theme.text, fontWeight: "700", textTransform: "capitalize" },
   coverThumb: { width: 90, height: 60, borderRadius: 12, borderWidth: 2, borderColor: theme.border, padding: 2 },
-  err: { color: theme.error, marginTop: 12 },
+  err: { ...type.caption, color: theme.error, marginTop: 12 },
   cta: { backgroundColor: theme.brand, borderRadius: theme.radius.pill, paddingVertical: 16, alignItems: "center", marginTop: 24 },
-  ctaTxt: { color: "#fff", fontWeight: "700", fontSize: 16 },
+  ctaTxt: { ...type.titleMd, color: "#fff", fontWeight: "700" },
 });

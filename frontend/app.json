@@ -10,7 +10,13 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.emergent.gigmarketplacepro.k5p3ff"
+      "bundleIdentifier": "com.emergent.gigmarketplacepro.k5p3ff",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Capture performance photos and videos",
+        "NSPhotoLibraryUsageDescription": "Share photos and videos from your library",
+        "NSMicrophoneUsageDescription": "Record audio for performance videos",
+        "NSLocationWhenInUseUsageDescription": "Show gigs and studios near you"
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -18,7 +24,15 @@
         "backgroundColor": "#000000"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.emergent.gigmarketplacepro.k5p3ff"
+      "package": "com.emergent.gigmarketplacepro.k5p3ff",
+      "permissions": [
+        "CAMERA",
+        "READ_MEDIA_IMAGES",
+        "READ_MEDIA_VIDEO",
+        "RECORD_AUDIO",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -34,6 +48,19 @@
           "imageWidth": 200,
           "resizeMode": "contain",
           "backgroundColor": "#000000"
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Choose photos to showcase your work",
+          "cameraPermission": "Capture performance photos and videos"
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Show nearby gigs, studios, and musicians"
         }
       ]
     ],

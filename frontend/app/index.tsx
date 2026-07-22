@@ -1,6 +1,6 @@
 import { View, Text, StyleSheet, ActivityIndicator, ImageBackground } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
-import { theme } from "@/src/theme";
+import { theme, type } from "@/src/theme";
 
 // Landing/splash. Auth gate in _layout handles routing away from here
 // once auth state resolves. Keep this purely visual to avoid race conditions.
@@ -24,6 +24,6 @@ export default function Splash() {
 const styles = StyleSheet.create({
   bg: { flex: 1, backgroundColor: theme.bg },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
-  brand: { color: theme.text, fontSize: 44, fontWeight: "800", letterSpacing: -1 },
-  tag: { color: theme.textDim, fontSize: 15, marginTop: 8 },
+  brand: { ...type.displayLg, color: theme.text, fontSize: 44 },
+  tag: { ...type.bodyMd, color: theme.textDim, marginTop: 8 },
 });

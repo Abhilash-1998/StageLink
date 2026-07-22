@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, ScrollView, ActivityIndicator, Pressable } from
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useAuth } from "@/src/context/AuthContext";
-import { theme } from "@/src/theme";
+import { theme, type } from "@/src/theme";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function Dashboard() {
@@ -79,16 +79,16 @@ const styles = StyleSheet.create({
   bg: { flex: 1, backgroundColor: theme.bg },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   header: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 20 },
-  h1: { color: theme.text, fontSize: 28, fontWeight: "800", letterSpacing: -0.5 },
-  sub: { color: theme.textDim, fontSize: 13, marginTop: 4 },
+  h1: { ...type.h1, color: theme.text, fontSize: 28 },
+  sub: { ...type.caption, color: theme.textDim, marginTop: 4 },
   grid: { flexDirection: "row", flexWrap: "wrap", paddingHorizontal: 16, gap: 12 },
   metric: { flexBasis: "47%", flexGrow: 1, backgroundColor: theme.bg2, borderRadius: theme.radius.lg, padding: 16, borderWidth: 1, borderColor: theme.border },
   mIcon: { width: 34, height: 34, borderRadius: 10, backgroundColor: theme.brandTint, alignItems: "center", justifyContent: "center", marginBottom: 12 },
-  mVal: { color: theme.text, fontSize: 24, fontWeight: "800", letterSpacing: -0.5 },
-  mLbl: { color: theme.textDim, fontSize: 12, marginTop: 2 },
-  sectionTitle: { color: theme.text, fontSize: 17, fontWeight: "700" },
+  mVal: { ...type.stat, color: theme.text, fontSize: 24 },
+  mLbl: { ...type.caption, color: theme.textDim, marginTop: 2 },
+  sectionTitle: { ...type.titleLg, color: theme.text, fontWeight: "700", fontSize: 16 },
   action: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: theme.bg2, padding: 14, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.border },
   actionIcon: { width: 40, height: 40, borderRadius: 10, backgroundColor: theme.brandTint, alignItems: "center", justifyContent: "center" },
-  actionTitle: { color: theme.text, fontSize: 14, fontWeight: "700" },
-  actionSub: { color: theme.textDim, fontSize: 12, marginTop: 2 },
+  actionTitle: { ...type.bodySm, color: theme.text, fontWeight: "700" },
+  actionSub: { ...type.caption, color: theme.textDim, marginTop: 2 },
 });

@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, FlatList, ActivityIndicator, RefreshControl, Pr
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useAuth } from "@/src/context/AuthContext";
-import { theme } from "@/src/theme";
+import { theme, type } from "@/src/theme";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function Applications() {
@@ -85,17 +85,17 @@ const styles = StyleSheet.create({
   bg: { flex: 1, backgroundColor: theme.bg },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   header: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 4 },
-  h1: { color: theme.text, fontSize: 28, fontWeight: "800", letterSpacing: -0.5 },
-  sub: { color: theme.textDim, fontSize: 13, marginTop: 4 },
+  h1: { ...type.h1, color: theme.text, fontSize: 28 },
+  sub: { ...type.caption, color: theme.textDim, marginTop: 4 },
   card: { flexDirection: "row", alignItems: "center", backgroundColor: theme.bg2, padding: 16, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.border },
-  title: { color: theme.text, fontSize: 15, fontWeight: "700" },
-  meta: { color: theme.textDim, fontSize: 12, marginTop: 4 },
+  title: { ...type.titleMd, color: theme.text, fontWeight: "700", fontSize: 15 },
+  meta: { ...type.caption, color: theme.textDim, marginTop: 4 },
   badgeRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 10 },
   badge: { flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: theme.bg3, paddingHorizontal: 10, paddingVertical: 4, borderRadius: theme.radius.pill, borderWidth: 1, borderColor: theme.border },
-  badgeTxt: { color: theme.text, fontSize: 10, fontWeight: "700" },
-  price: { color: theme.brand, fontSize: 15, fontWeight: "800" },
+  badgeTxt: { ...type.tiny, color: theme.text, fontWeight: "700", letterSpacing: 0.3 },
+  price: { ...type.titleMd, color: theme.brand, fontWeight: "800" },
   empty: { padding: 40, alignItems: "center", gap: 10 },
-  emptyTxt: { color: theme.textDim, fontSize: 14, textAlign: "center" },
+  emptyTxt: { ...type.bodySm, color: theme.textDim, textAlign: "center" },
   cta: { marginTop: 12, backgroundColor: theme.brand, paddingHorizontal: 24, paddingVertical: 12, borderRadius: theme.radius.pill },
-  ctaTxt: { color: "#fff", fontWeight: "700" },
+  ctaTxt: { ...type.label, color: "#fff", fontWeight: "700" },
 });

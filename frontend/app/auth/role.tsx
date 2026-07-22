@@ -3,7 +3,7 @@ import { View, Text, Pressable, StyleSheet, ImageBackground, ActivityIndicator, 
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@/src/context/AuthContext";
-import { theme } from "@/src/theme";
+import { theme, type } from "@/src/theme";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 type Choice = "musician" | "organizer" | "both";

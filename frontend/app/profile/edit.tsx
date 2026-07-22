@@ -3,9 +3,12 @@ import { View, Text, StyleSheet, ScrollView, TextInput, Pressable, ActivityIndic
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { router, useFocusEffect } from "expo-router";
+import * as Haptics from "expo-haptics";
 import { useAuth } from "@/src/context/AuthContext";
-import { theme } from "@/src/theme";
+import { theme, type } from "@/src/theme";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { MediaPickerSheet, PickedMedia } from "@/src/components/MediaPickerSheet";
+import { MediaViewer } from "@/src/components/MediaViewer";
 
 const GENRES = ["Jazz", "Pop", "Rock", "Indie", "EDM", "Classical", "Fusion", "R&B", "Soul", "House", "Bollywood", "Carnatic", "Hindustani"];
 const INSTRUMENTS = ["Vocals", "Guitar", "Keyboard", "Violin", "Drums", "Bass", "DJ Deck", "Saxophone", "Tabla", "Sitar"];
@@ -43,6 +46,12 @@ export default function EditProfile() {
   const [newSvcDesc, setNewSvcDesc] = useState("");
   const [newSvcPrice, setNewSvcPrice] = useState("");
   const [newSvcType, setNewSvcType] = useState<"per_hour" | "per_event" | "starting_at">("per_event");
+
+  // Native picker + viewer state
+  const [pickerFor, setPickerFor] = useState<null | "avatar" | "cover" | "portfolio">(null);
+  const [viewerIdx, setViewerIdx] = useState<number | null>(null);
+  const [selection, setSelection] = useState<Set<string>>(new Set());
+  const selectionMode = selection.size > 0;
 
   const load = useCallback(async () => {
     if (!user) return;
@@ -130,8 +139,58 @@ export default function EditProfile() {
   };
 
   const removePortfolio = async (id: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
     await fetchApi(`/profile/portfolio/${id}`, { method: "DELETE" });
     await load();
+  };
+
+  const toggleSelect = (id: string) => {
+    Haptics.selectionAsync().catch(() => {});
+    setSelection(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const bulkDelete = async () => {
+    if (selection.size === 0) return;
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+    const ids = Array.from(selection);
+    await Promise.all(ids.map(id => fetchApi(`/profile/portfolio/${id}`, { method: "DELETE" })));
+    setSelection(new Set());
+    await load();
+    setMsg(`Deleted ${ids.length} item${ids.length === 1 ? "" : "s"}`);
+    setTimeout(() => setMsg(null), 2000);
+  };
+
+  const onPickedMedia = async (items: PickedMedia[]) => {
+    if (!items.length) return;
+    if (pickerFor === "avatar") {
+      update({ avatar_url: items[0].uri });
+    } else if (pickerFor === "cover") {
+      update({ cover_url: items[0].uri });
+    } else if (pickerFor === "portfolio") {
+      setSaving(true);
+      try {
+        for (const it of items) {
+          await fetchApi("/profile/portfolio", {
+            method: "POST",
+            body: JSON.stringify({
+              title: newPortTitle.trim() || `Upload ${new Date().toLocaleDateString()}`,
+              description: "", category: "Performance",
+              media_url: it.uri, media_type: it.type, tags: [],
+            }),
+          });
+        }
+        setNewPortTitle("");
+        await load();
+        setMsg(`Added ${items.length} to portfolio`);
+        setTimeout(() => setMsg(null), 2000);
+      } catch (e: any) { setErr(e.message); }
+      finally { setSaving(false); }
+    }
+    setPickerFor(null);
   };
 
   const addService = async () => {
@@ -202,6 +261,22 @@ export default function EditProfile() {
           </View>
 
           <Section title="Profile photo">
+            <View style={{ flexDirection: "row", gap: 10, alignItems: "center" }}>
+              <View style={styles.avatarBig}>
+                {p.avatar_url ? <Image source={{ uri: p.avatar_url }} style={{ width: "100%", height: "100%" }} /> :
+                  <Text style={styles.avTxt}>{user?.full_name?.[0]}</Text>}
+              </View>
+              <Pressable testID="pick-avatar" onPress={() => setPickerFor("avatar")} style={styles.uploadBtn}>
+                <Ionicons name="camera" size={16} color={theme.brand} />
+                <Text style={styles.uploadBtnTxt}>Upload new</Text>
+              </Pressable>
+              {p.avatar_url && (
+                <Pressable testID="clear-avatar" onPress={() => update({ avatar_url: "" })} style={styles.clearBtn}>
+                  <Ionicons name="close" size={16} color={theme.textDim} />
+                </Pressable>
+              )}
+            </View>
+            <Text style={styles.hint}>Or pick a preset:</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pickerRow}>
               {AVATAR_CHOICES.map(url => (
                 <Pressable key={url} testID={`avatar-${url.slice(-20)}`} onPress={() => update({ avatar_url: url })} style={[styles.picker, p.avatar_url === url && styles.pickerOn]}>
@@ -209,11 +284,14 @@ export default function EditProfile() {
                 </Pressable>
               ))}
             </ScrollView>
-            <Text style={styles.hint}>Or paste an image URL</Text>
-            <TextInput testID="avatar-url-input" style={styles.input} value={p.avatar_url || ""} onChangeText={t => update({ avatar_url: t })} placeholder="https://..." placeholderTextColor={theme.textDim} autoCapitalize="none" />
           </Section>
 
           <Section title="Cover photo">
+            <Pressable testID="pick-cover" onPress={() => setPickerFor("cover")} style={styles.uploadBtn}>
+              <Ionicons name="image" size={16} color={theme.brand} />
+              <Text style={styles.uploadBtnTxt}>Upload cover</Text>
+            </Pressable>
+            <Text style={styles.hint}>Or pick a preset:</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pickerRow}>
               {COVER_CHOICES.map(url => (
                 <Pressable key={url} onPress={() => update({ cover_url: url })} style={[styles.coverThumb, p.cover_url === url && styles.pickerOn]}>
@@ -318,21 +396,56 @@ export default function EditProfile() {
           </Section>
 
           <Section title="Portfolio">
-            {(p.portfolio_items || []).map((it: any) => (
-              <View key={it.id} style={styles.portRow} testID={`port-item-${it.id}`}>
-                <Image source={{ uri: it.thumbnail_url || it.media_url }} style={styles.portThumb} />
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.portTitle}>{it.title}</Text>
-                  <Text style={styles.portMeta}>{it.category} · {it.media_type}</Text>
-                </View>
-                <Pressable testID={`port-del-${it.id}`} onPress={() => removePortfolio(it.id)} style={styles.iconBtn}>
-                  <Ionicons name="trash-outline" size={16} color={theme.error} />
+            {selectionMode && (
+              <View style={styles.selBar}>
+                <Text style={styles.selCount}>{selection.size} selected</Text>
+                <View style={{ flex: 1 }} />
+                <Pressable testID="sel-clear" onPress={() => setSelection(new Set())} style={styles.selBtn}>
+                  <Text style={styles.selBtnTxt}>Cancel</Text>
+                </Pressable>
+                <Pressable testID="sel-delete" onPress={bulkDelete} style={[styles.selBtn, { backgroundColor: theme.error, borderColor: theme.error }]}>
+                  <Ionicons name="trash" size={13} color="#fff" />
+                  <Text style={[styles.selBtnTxt, { color: "#fff" }]}>Delete</Text>
                 </Pressable>
               </View>
-            ))}
+            )}
+            {(p.portfolio_items || []).length > 0 && (
+              <View style={styles.portGrid}>
+                {(p.portfolio_items || []).map((it: any, i: number) => {
+                  const on = selection.has(it.id);
+                  return (
+                    <Pressable
+                      key={it.id}
+                      testID={`port-item-${it.id}`}
+                      onLongPress={() => toggleSelect(it.id)}
+                      onPress={() => selectionMode ? toggleSelect(it.id) : setViewerIdx(i)}
+                      delayLongPress={280}
+                      style={styles.portTile}
+                    >
+                      <Image source={{ uri: it.thumbnail_url || it.media_url }} style={StyleSheet.absoluteFill as any} resizeMode="cover" />
+                      {it.media_type === "video" && (
+                        <View style={styles.playBadge}><Ionicons name="play-circle" size={20} color="#fff" /></View>
+                      )}
+                      {on && (
+                        <View style={styles.selectedOverlay}>
+                          <View style={styles.selectedCheck}><Ionicons name="checkmark" size={14} color="#fff" /></View>
+                        </View>
+                      )}
+                    </Pressable>
+                  );
+                })}
+              </View>
+            )}
             <View style={styles.addCard}>
-              <TextInput testID="new-port-title" style={styles.input} value={newPortTitle} onChangeText={setNewPortTitle} placeholder="Item title" placeholderTextColor={theme.textDim} />
-              <TextInput testID="new-port-url" style={[styles.input, { marginTop: 8 }]} value={newPortUrl} onChangeText={setNewPortUrl} placeholder="Media URL (image/video)" placeholderTextColor={theme.textDim} autoCapitalize="none" />
+              <TextInput testID="new-port-title" style={styles.input} value={newPortTitle} onChangeText={setNewPortTitle} placeholder="Title (optional if uploading)" placeholderTextColor={theme.textDim} />
+              <View style={{ flexDirection: "row", gap: 10, marginTop: 8 }}>
+                <Pressable testID="upload-portfolio" onPress={() => setPickerFor("portfolio")} disabled={saving} style={[styles.addBtn, { flex: 1 }]}>
+                  <Ionicons name="cloud-upload" size={16} color={theme.brand} />
+                  <Text style={styles.addBtnTxt}>Upload from device</Text>
+                </Pressable>
+              </View>
+              <Text style={styles.hint}>Or paste a URL below:</Text>
+              <TextInput testID="new-port-url" style={[styles.input, { marginTop: 8 }]} value={newPortUrl} onChangeText={setNewPortUrl} placeholder="https://…" placeholderTextColor={theme.textDim} autoCapitalize="none" />
               <View style={[styles.chipWrap, { marginTop: 8 }]}>
                 {(["image", "video", "audio"] as const).map(t => (
                   <Chip key={t} label={t} on={newPortType === t} onPress={() => setNewPortType(t)} />
@@ -340,7 +453,7 @@ export default function EditProfile() {
               </View>
               <Pressable testID="add-portfolio" onPress={addPortfolio} disabled={saving} style={styles.addBtn}>
                 <Ionicons name="add" size={16} color={theme.brand} />
-                <Text style={styles.addBtnTxt}>Add to portfolio</Text>
+                <Text style={styles.addBtnTxt}>Add via URL</Text>
               </Pressable>
             </View>
           </Section>
@@ -416,6 +529,23 @@ export default function EditProfile() {
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      <MediaPickerSheet
+        visible={!!pickerFor}
+        onClose={() => setPickerFor(null)}
+        onPicked={onPickedMedia}
+        allowsMultiple={pickerFor === "portfolio"}
+        allowVideo={pickerFor === "portfolio"}
+        aspect={pickerFor === "avatar" ? [1, 1] : pickerFor === "cover" ? [16, 9] : undefined}
+        allowEditing={pickerFor === "avatar" || pickerFor === "cover"}
+      />
+
+      <MediaViewer
+        visible={viewerIdx !== null}
+        items={(p.portfolio_items || []).map((it: any) => ({ uri: it.media_url, type: it.media_type, title: it.title }))}
+        initialIndex={viewerIdx ?? 0}
+        onClose={() => setViewerIdx(null)}
+      />
     </SafeAreaView>
   );
 }
@@ -424,16 +554,16 @@ const styles = StyleSheet.create({
   bg: { flex: 1, backgroundColor: theme.bg },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 12, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: theme.border },
-  h1: { color: theme.text, fontSize: 17, fontWeight: "700" },
+  h1: { ...type.titleLg, color: theme.text, fontWeight: "700" },
   coverPreview: { height: 130, backgroundColor: theme.bg2, marginBottom: 40 },
   avatarPreview: { position: "absolute", bottom: -34, left: 20, width: 76, height: 76, borderRadius: 38, backgroundColor: theme.bg2, borderWidth: 3, borderColor: theme.bg, alignItems: "center", justifyContent: "center", overflow: "hidden" },
   avImg: { width: "100%", height: "100%" },
-  avTxt: { color: theme.text, fontSize: 26, fontWeight: "800" },
+  avTxt: { ...type.h1, color: theme.text, fontSize: 26 },
   section: { paddingHorizontal: 20, marginTop: 24 },
-  sectionTitle: { color: theme.text, fontSize: 15, fontWeight: "700", marginBottom: 10 },
-  label: { color: theme.textMid, fontSize: 12, fontWeight: "600", marginBottom: 6, marginTop: 12 },
-  input: { backgroundColor: theme.bg2, borderColor: theme.border, borderWidth: 1, borderRadius: theme.radius.md, paddingHorizontal: 14, paddingVertical: 12, color: theme.text, fontSize: 14 },
-  hint: { color: theme.textDim, fontSize: 11, marginTop: 12, marginBottom: -4 },
+  sectionTitle: { ...type.titleMd, color: theme.text, fontWeight: "700", marginBottom: 10 },
+  label: { ...type.label, color: theme.textMid, fontSize: 12, marginBottom: 6, marginTop: 12 },
+  input: { ...type.bodySm, backgroundColor: theme.bg2, borderColor: theme.border, borderWidth: 1, borderRadius: theme.radius.md, paddingHorizontal: 14, paddingVertical: 12, color: theme.text },
+  hint: { ...type.tiny, color: theme.textDim, marginTop: 12, marginBottom: -4 },
   pickerRow: { flexDirection: "row", gap: 10, paddingVertical: 6 },
   picker: { width: 64, height: 64, borderRadius: theme.radius.md, borderWidth: 2, borderColor: theme.border, padding: 2 },
   coverThumb: { width: 120, height: 68, borderRadius: theme.radius.md, borderWidth: 2, borderColor: theme.border, padding: 2 },
@@ -441,24 +571,37 @@ const styles = StyleSheet.create({
   chipWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 4 },
   chip: { paddingHorizontal: 13, paddingVertical: 7, borderRadius: theme.radius.pill, backgroundColor: theme.bg2, borderWidth: 1, borderColor: theme.border },
   chipOn: { backgroundColor: theme.brandTint, borderColor: theme.brand },
-  chipTxt: { color: theme.textDim, fontSize: 12, fontWeight: "500", textTransform: "capitalize" },
-  chipTxtOn: { color: theme.text, fontWeight: "700" },
+  chipTxt: { ...type.caption, color: theme.textDim, fontWeight: "500", textTransform: "capitalize" },
+  chipTxtOn: { ...type.caption, color: theme.text, fontWeight: "700", textTransform: "capitalize" },
   switchRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 14 },
-  switchLbl: { color: theme.text, fontSize: 13, fontWeight: "600" },
-  switchSub: { color: theme.textDim, fontSize: 11, marginTop: 2 },
+  switchLbl: { ...type.bodySm, color: theme.text, fontWeight: "600" },
+  switchSub: { ...type.tiny, color: theme.textDim, marginTop: 2 },
   aiBtn: { flexDirection: "row", alignItems: "center", gap: 5, paddingHorizontal: 10, paddingVertical: 5, borderRadius: theme.radius.pill, backgroundColor: theme.brandTint, borderWidth: 1, borderColor: theme.brand },
-  aiBtnTxt: { color: theme.brand, fontSize: 11, fontWeight: "700" },
+  aiBtnTxt: { ...type.tiny, color: theme.brand, fontWeight: "700" },
   portRow: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: theme.bg2, borderRadius: theme.radius.md, padding: 10, borderWidth: 1, borderColor: theme.border, marginBottom: 8 },
   portThumb: { width: 48, height: 48, borderRadius: theme.radius.sm, backgroundColor: theme.bg3 },
-  portTitle: { color: theme.text, fontSize: 13, fontWeight: "700" },
-  portMeta: { color: theme.textDim, fontSize: 11, marginTop: 2 },
+  portTitle: { ...type.caption, color: theme.text, fontWeight: "700" },
+  portMeta: { ...type.tiny, color: theme.textDim, marginTop: 2 },
   iconBtn: { padding: 8, borderRadius: theme.radius.md, backgroundColor: theme.bg3 },
   svcIcon: { width: 48, height: 48, borderRadius: theme.radius.sm, backgroundColor: theme.brandTint, alignItems: "center", justifyContent: "center" },
   addCard: { backgroundColor: theme.bg2, borderRadius: theme.radius.md, padding: 12, borderWidth: 1, borderColor: theme.border, borderStyle: "dashed", marginTop: 8 },
   addBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 10, paddingVertical: 10, borderRadius: theme.radius.pill, backgroundColor: theme.brandTint, borderWidth: 1, borderColor: theme.brand },
-  addBtnTxt: { color: theme.brand, fontWeight: "700", fontSize: 13 },
-  err: { color: theme.error, marginTop: 16, marginHorizontal: 20, fontSize: 13 },
-  ok: { color: theme.success, marginTop: 16, marginHorizontal: 20, fontSize: 13 },
+  addBtnTxt: { ...type.caption, color: theme.brand, fontWeight: "700" },
+  err: { ...type.caption, color: theme.error, marginTop: 16, marginHorizontal: 20 },
+  ok: { ...type.caption, color: theme.success, marginTop: 16, marginHorizontal: 20 },
   cta: { backgroundColor: theme.brand, borderRadius: theme.radius.pill, paddingVertical: 16, alignItems: "center" },
-  ctaTxt: { color: "#fff", fontWeight: "700", fontSize: 15 },
+  ctaTxt: { ...type.titleMd, color: "#fff", fontWeight: "700" },
+  avatarBig: { width: 72, height: 72, borderRadius: 36, backgroundColor: theme.bg2, borderWidth: 1, borderColor: theme.border, overflow: "hidden", alignItems: "center", justifyContent: "center" },
+  uploadBtn: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: theme.brandTint, borderColor: theme.brand, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 10, borderRadius: theme.radius.pill },
+  uploadBtnTxt: { ...type.caption, color: theme.brand, fontWeight: "700" },
+  clearBtn: { padding: 10, borderRadius: theme.radius.pill, backgroundColor: theme.bg2, borderWidth: 1, borderColor: theme.border },
+  portGrid: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 12 },
+  portTile: { width: "31.8%", aspectRatio: 1, borderRadius: theme.radius.md, overflow: "hidden", backgroundColor: theme.bg2 },
+  playBadge: { position: "absolute", top: 8, right: 8 },
+  selectedOverlay: { position: "absolute", inset: 0, backgroundColor: "rgba(225,29,72,0.4)", borderWidth: 3, borderColor: theme.brand, borderRadius: theme.radius.md, alignItems: "flex-end", padding: 6 },
+  selectedCheck: { width: 22, height: 22, borderRadius: 11, backgroundColor: theme.brand, alignItems: "center", justifyContent: "center" },
+  selBar: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 10, padding: 10, borderRadius: theme.radius.md, backgroundColor: theme.brandTint, borderWidth: 1, borderColor: theme.brand },
+  selCount: { ...type.caption, color: theme.brand, fontWeight: "700" },
+  selBtn: { flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 12, paddingVertical: 7, borderRadius: theme.radius.pill, backgroundColor: theme.bg2, borderWidth: 1, borderColor: theme.border },
+  selBtnTxt: { ...type.caption, color: theme.textMid, fontWeight: "700" },
 });

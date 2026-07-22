@@ -4,7 +4,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { useLocalSearchParams, router } from "expo-router";
 import { useAuth } from "@/src/context/AuthContext";
-import { theme } from "@/src/theme";
+import { theme, type } from "@/src/theme";
 import { SafeAreaView } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
 
@@ -137,31 +137,31 @@ const styles = StyleSheet.create({
   backBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: "rgba(9,9,11,0.7)", alignItems: "center", justifyContent: "center", marginLeft: 16, marginTop: 8 },
   heroBottom: { position: "absolute", bottom: 20, left: 20, right: 20 },
   tag: { alignSelf: "flex-start", backgroundColor: "rgba(225,29,72,0.25)", borderColor: theme.brand, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 4, borderRadius: theme.radius.pill },
-  tagTxt: { color: theme.brand, fontSize: 10, fontWeight: "700", letterSpacing: 0.5 },
-  heroTitle: { color: theme.text, fontSize: 28, fontWeight: "800", marginTop: 10, letterSpacing: -0.5 },
+  tagTxt: { ...type.tiny, color: theme.brand, fontWeight: "700", letterSpacing: 0.5 },
+  heroTitle: { ...type.h1, color: theme.text, fontSize: 28, marginTop: 10 },
   body: { padding: 20 },
-  price: { color: theme.text, fontSize: 34, fontWeight: "800", letterSpacing: -0.5 },
-  priceLbl: { color: theme.textDim, fontSize: 12, marginTop: 2, marginBottom: 20 },
+  price: { ...type.priceLg, color: theme.text, fontSize: 34 },
+  priceLbl: { ...type.caption, color: theme.textDim, marginTop: 2, marginBottom: 20 },
   metaGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   metaCard: { flexBasis: "47%", flexGrow: 1, backgroundColor: theme.bg2, borderRadius: theme.radius.md, padding: 14, borderWidth: 1, borderColor: theme.border },
-  metaLbl: { color: theme.textDim, fontSize: 11, marginTop: 8 },
-  metaVal: { color: theme.text, fontSize: 14, fontWeight: "700", marginTop: 2 },
-  sTitle: { color: theme.text, fontSize: 16, fontWeight: "700", marginTop: 24, marginBottom: 10 },
-  desc: { color: theme.textMid, fontSize: 14, lineHeight: 22 },
+  metaLbl: { ...type.tiny, color: theme.textDim, marginTop: 8 },
+  metaVal: { ...type.bodySm, color: theme.text, fontWeight: "700", marginTop: 2 },
+  sTitle: { ...type.titleMd, color: theme.text, fontWeight: "700", marginTop: 24, marginBottom: 10 },
+  desc: { ...type.bodySm, color: theme.textMid, lineHeight: 22 },
   orgCard: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: theme.bg2, padding: 14, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.border },
   orgAvatar: { width: 44, height: 44, borderRadius: 12, backgroundColor: theme.brandTint, alignItems: "center", justifyContent: "center" },
-  orgName: { color: theme.text, fontSize: 14, fontWeight: "700" },
-  orgMeta: { color: theme.textDim, fontSize: 12, marginTop: 2 },
-  input: { backgroundColor: theme.bg2, borderColor: theme.border, borderWidth: 1, borderRadius: theme.radius.md, padding: 12, color: theme.text, minHeight: 80, textAlignVertical: "top" },
+  orgName: { ...type.bodySm, color: theme.text, fontWeight: "700" },
+  orgMeta: { ...type.caption, color: theme.textDim, marginTop: 2 },
+  input: { ...type.bodySm, backgroundColor: theme.bg2, borderColor: theme.border, borderWidth: 1, borderRadius: theme.radius.md, padding: 12, color: theme.text, minHeight: 80, textAlignVertical: "top" },
   aiBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 20, paddingVertical: 14, borderRadius: theme.radius.pill, backgroundColor: theme.brandTint, borderWidth: 1, borderColor: theme.brand },
-  aiBtnTxt: { color: theme.brand, fontWeight: "700", fontSize: 13 },
+  aiBtnTxt: { ...type.caption, color: theme.brand, fontWeight: "700" },
   contractBox: { marginTop: 12, backgroundColor: theme.bg2, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.border, padding: 14 },
-  contractTitle: { color: theme.text, fontSize: 13, fontWeight: "700", marginBottom: 8 },
-  contractTxt: { color: theme.textMid, fontSize: 13, lineHeight: 20 },
+  contractTitle: { ...type.caption, color: theme.text, fontWeight: "700", marginBottom: 8 },
+  contractTxt: { ...type.caption, color: theme.textMid, lineHeight: 20 },
   footer: { position: "absolute", bottom: 0, left: 0, right: 0, backgroundColor: theme.bg, borderTopWidth: 1, borderTopColor: theme.border, paddingHorizontal: 20, paddingTop: 12 },
   cta: { backgroundColor: theme.brand, borderRadius: theme.radius.pill, paddingVertical: 16, alignItems: "center" },
   ctaDone: { backgroundColor: theme.success },
-  ctaTxt: { color: "#fff", fontWeight: "700", fontSize: 16 },
+  ctaTxt: { ...type.titleMd, color: "#fff", fontWeight: "700" },
   banner: { position: "absolute", top: 60, left: 20, right: 20, backgroundColor: theme.bg2, borderColor: theme.brand, borderWidth: 1, borderRadius: theme.radius.md, padding: 14, zIndex: 100 },
-  bannerTxt: { color: theme.text, fontSize: 13, textAlign: "center", fontWeight: "600" },
+  bannerTxt: { ...type.caption, color: theme.text, textAlign: "center", fontWeight: "600" },
 });

@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, FlatList, ActivityIndicator, Pressable, Image, 
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useAuth } from "@/src/context/AuthContext";
-import { theme } from "@/src/theme";
+import { theme, type } from "@/src/theme";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 type Thread = {
@@ -79,17 +79,17 @@ const styles = StyleSheet.create({
   bg: { flex: 1, backgroundColor: theme.bg },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   header: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 16 },
-  h1: { color: theme.text, fontSize: 26, fontWeight: "800", letterSpacing: -0.5 },
-  sub: { color: theme.textDim, fontSize: 13, marginTop: 4 },
+  h1: { ...type.h1, color: theme.text, fontSize: 26 },
+  sub: { ...type.caption, color: theme.textDim, marginTop: 4 },
   thread: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 20, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: theme.border },
   avatar: { width: 48, height: 48, borderRadius: 24, backgroundColor: theme.bg2, alignItems: "center", justifyContent: "center", overflow: "hidden" },
-  avTxt: { color: theme.text, fontWeight: "700", fontSize: 18 },
-  name: { color: theme.text, fontSize: 14, fontWeight: "700" },
-  time: { color: theme.textDim, fontSize: 11 },
-  preview: { color: theme.textDim, fontSize: 13, marginTop: 3 },
+  avTxt: { ...type.titleLg, color: theme.text, fontWeight: "700" },
+  name: { ...type.bodySm, color: theme.text, fontWeight: "700" },
+  time: { ...type.tiny, color: theme.textDim },
+  preview: { ...type.caption, color: theme.textDim, marginTop: 3 },
   badge: { minWidth: 22, height: 22, paddingHorizontal: 6, borderRadius: 11, backgroundColor: theme.brand, alignItems: "center", justifyContent: "center" },
-  badgeTxt: { color: "#fff", fontSize: 11, fontWeight: "700" },
+  badgeTxt: { ...type.tiny, color: "#fff", fontWeight: "700" },
   empty: { padding: 48, alignItems: "center", gap: 8 },
-  emptyTxt: { color: theme.text, fontSize: 15, fontWeight: "700", marginTop: 8 },
-  emptySub: { color: theme.textDim, fontSize: 13, textAlign: "center" },
+  emptyTxt: { ...type.titleMd, color: theme.text, fontWeight: "700", marginTop: 8 },
+  emptySub: { ...type.caption, color: theme.textDim, textAlign: "center" },
 });

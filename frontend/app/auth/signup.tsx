@@ -2,7 +2,7 @@ import { useState } from "react";
 import { View, Text, TextInput, Pressable, StyleSheet, KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator } from "react-native";
 import { router } from "expo-router";
 import { useAuth } from "@/src/context/AuthContext";
-import { theme } from "@/src/theme";
+import { theme, type } from "@/src/theme";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function Signup() {
@@ -58,12 +58,12 @@ export default function Signup() {
 const styles = StyleSheet.create({
   bg: { flex: 1, backgroundColor: theme.bg },
   container: { padding: 24, paddingTop: 32 },
-  title: { color: theme.text, fontSize: 32, fontWeight: "800", letterSpacing: -0.5 },
-  sub: { color: theme.textDim, fontSize: 15, marginTop: 6, marginBottom: 32 },
-  label: { color: theme.textMid, fontSize: 13, fontWeight: "600", marginBottom: 6, marginTop: 12 },
-  input: { backgroundColor: theme.bg2, borderColor: theme.border, borderWidth: 1, borderRadius: theme.radius.md, paddingHorizontal: 14, paddingVertical: 14, color: theme.text, fontSize: 15 },
+  title: { ...type.displayMd, color: theme.text, fontSize: 32 },
+  sub: { ...type.bodyMd, color: theme.textDim, marginTop: 6, marginBottom: 32 },
+  label: { ...type.label, color: theme.textMid, marginBottom: 6, marginTop: 12 },
+  input: { ...type.bodyMd, backgroundColor: theme.bg2, borderColor: theme.border, borderWidth: 1, borderRadius: theme.radius.md, paddingHorizontal: 14, paddingVertical: 14, color: theme.text },
   cta: { backgroundColor: theme.brand, borderRadius: theme.radius.pill, paddingVertical: 16, marginTop: 28, alignItems: "center" },
-  ctaText: { color: "#fff", fontWeight: "700", fontSize: 16 },
-  err: { color: theme.error, marginTop: 12, fontSize: 13 },
-  link: { color: theme.textDim, fontSize: 14 },
+  ctaText: { ...type.titleMd, color: "#fff", fontWeight: "700" },
+  err: { ...type.caption, color: theme.error, marginTop: 12 },
+  link: { ...type.bodySm, color: theme.textDim },
 });

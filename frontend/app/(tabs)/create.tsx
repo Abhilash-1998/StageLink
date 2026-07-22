@@ -1,10 +1,12 @@
 import { useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform, Image } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
+import * as Haptics from "expo-haptics";
 import { useAuth } from "@/src/context/AuthContext";
-import { theme } from "@/src/theme";
+import { theme, type } from "@/src/theme";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { MediaPickerSheet, PickedMedia } from "@/src/components/MediaPickerSheet";
 
 type Action =
   | "post" | "hiring" | "band" | "equipment_rent" | "equipment_sale"
@@ -34,9 +36,20 @@ export default function Create() {
   const [price, setPrice] = useState("");
   const [category, setCategory] = useState("Guitar");
   const [desc, setDesc] = useState("");
+  const [mediaUri, setMediaUri] = useState<string | null>(null);
+  const [mediaType, setMediaType] = useState<"image" | "video" | null>(null);
+  const [showPicker, setShowPicker] = useState(false);
+
+  const onPickedMedia = (items: PickedMedia[]) => {
+    if (!items.length) return;
+    setMediaUri(items[0].uri);
+    setMediaType(items[0].type);
+    Haptics.selectionAsync().catch(() => {});
+  };
 
   const reset = () => {
     setText(""); setTitle(""); setCity(""); setPrice(""); setCategory("Guitar"); setDesc("");
+    setMediaUri(null); setMediaType(null);
     setErr(null); setOk(null);
   };
 
@@ -45,8 +58,11 @@ export default function Create() {
     try {
       setSaving(true);
       if (action === "post") {
-        if (!text.trim()) throw new Error("Say something");
-        await fetchApi("/posts", { method: "POST", body: JSON.stringify({ text }) });
+        if (!text.trim() && !mediaUri) throw new Error("Say something or add media");
+        await fetchApi("/posts", { method: "POST", body: JSON.stringify({
+          text, media_url: mediaUri || undefined, media_type: mediaType || undefined,
+        })});
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
         setOk("Posted to community");
       } else if (action === "hiring") {
         router.push("/gig/new");
@@ -127,9 +143,22 @@ export default function Create() {
           {action === "post" && (
             <>
               <Text style={styles.label}>What's on your mind?</Text>
-              <TextInput testID="post-text" style={[styles.input, { height: 140, textAlignVertical: "top", paddingTop: 12 }]}
+              <TextInput testID="post-text" style={[styles.input, { height: 120, textAlignVertical: "top", paddingTop: 12 }]}
                          value={text} onChangeText={setText} multiline
                          placeholder="Share a performance, insight, or moment…" placeholderTextColor={theme.textDim} />
+              {mediaUri && (
+                <View style={styles.mediaPreview}>
+                  <Image source={{ uri: mediaUri }} style={styles.mediaImg} />
+                  {mediaType === "video" && <View style={styles.mediaPlay}><Ionicons name="play" size={22} color="#fff" /></View>}
+                  <Pressable testID="clear-post-media" onPress={() => { setMediaUri(null); setMediaType(null); }} style={styles.mediaX}>
+                    <Ionicons name="close" size={18} color="#fff" />
+                  </Pressable>
+                </View>
+              )}
+              <Pressable testID="post-add-media" onPress={() => setShowPicker(true)} style={styles.addMediaBtn}>
+                <Ionicons name="images" size={18} color={theme.brand} />
+                <Text style={styles.addMediaTxt}>{mediaUri ? "Change media" : "Add photo or video"}</Text>
+              </Pressable>
             </>
           )}
           {action === "band" && (
@@ -207,6 +236,14 @@ export default function Create() {
           </Pressable>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      <MediaPickerSheet
+        visible={showPicker}
+        onClose={() => setShowPicker(false)}
+        onPicked={onPickedMedia}
+        allowVideo={action === "post"}
+        allowsMultiple={false}
+      />
     </SafeAreaView>
   );
 }
@@ -214,23 +251,29 @@ export default function Create() {
 const styles = StyleSheet.create({
   bg: { flex: 1, backgroundColor: theme.bg },
   header: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 12 },
-  h1: { color: theme.text, fontSize: 26, fontWeight: "800", letterSpacing: -0.5 },
-  sub: { color: theme.textDim, fontSize: 14, marginTop: 6 },
+  h1: { ...type.h1, color: theme.text, fontSize: 26 },
+  sub: { ...type.bodySm, color: theme.textDim, marginTop: 6 },
   subHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: theme.border },
-  subTitle: { color: theme.text, fontSize: 16, fontWeight: "700" },
+  subTitle: { ...type.titleMd, color: theme.text, fontWeight: "700" },
   actionCard: { flexDirection: "row", alignItems: "center", gap: 14, backgroundColor: theme.bg2, borderRadius: theme.radius.lg, padding: 16, borderWidth: 1, borderColor: theme.border },
   actionIcon: { width: 44, height: 44, borderRadius: 12, backgroundColor: theme.brandTint, alignItems: "center", justifyContent: "center" },
-  actionTitle: { color: theme.text, fontSize: 15, fontWeight: "700" },
-  actionDesc: { color: theme.textDim, fontSize: 12, marginTop: 3 },
-  label: { color: theme.textMid, fontSize: 13, fontWeight: "600", marginTop: 14, marginBottom: 6 },
-  input: { backgroundColor: theme.bg2, borderColor: theme.border, borderWidth: 1, borderRadius: theme.radius.md, paddingHorizontal: 14, paddingVertical: 12, color: theme.text, fontSize: 14 },
+  actionTitle: { ...type.titleMd, color: theme.text, fontWeight: "700", fontSize: 15 },
+  actionDesc: { ...type.caption, color: theme.textDim, marginTop: 3 },
+  label: { ...type.label, color: theme.textMid, marginTop: 14, marginBottom: 6 },
+  input: { ...type.bodySm, backgroundColor: theme.bg2, borderColor: theme.border, borderWidth: 1, borderRadius: theme.radius.md, paddingHorizontal: 14, paddingVertical: 12, color: theme.text },
   pillRow: { flexDirection: "row", gap: 8, paddingVertical: 4 },
   pill: { flexShrink: 0, paddingHorizontal: 12, paddingVertical: 7, borderRadius: theme.radius.pill, backgroundColor: theme.bg2, borderWidth: 1, borderColor: theme.border },
   pillOn: { backgroundColor: theme.brandTint, borderColor: theme.brand },
-  pillTxt: { color: theme.textDim, fontSize: 12, fontWeight: "600" },
-  pillTxtOn: { color: theme.text, fontWeight: "700" },
-  err: { color: theme.error, marginTop: 12, fontSize: 13 },
-  ok: { color: theme.success, marginTop: 12, fontSize: 13 },
+  pillTxt: { ...type.caption, color: theme.textDim, fontWeight: "600" },
+  pillTxtOn: { ...type.caption, color: theme.text, fontWeight: "700" },
+  err: { ...type.caption, color: theme.error, marginTop: 12 },
+  ok: { ...type.caption, color: theme.success, marginTop: 12 },
   cta: { backgroundColor: theme.brand, borderRadius: theme.radius.pill, paddingVertical: 16, alignItems: "center", marginTop: 24 },
-  ctaTxt: { color: "#fff", fontWeight: "700", fontSize: 16 },
+  ctaTxt: { ...type.titleMd, color: "#fff", fontWeight: "700" },
+  mediaPreview: { marginTop: 12, borderRadius: theme.radius.md, overflow: "hidden", position: "relative" },
+  mediaImg: { width: "100%", height: 220, backgroundColor: theme.bg3 },
+  mediaX: { position: "absolute", top: 8, right: 8, width: 32, height: 32, borderRadius: 16, backgroundColor: "rgba(0,0,0,0.6)", alignItems: "center", justifyContent: "center" },
+  mediaPlay: { position: "absolute", top: "45%", left: "45%", width: 48, height: 48, borderRadius: 24, backgroundColor: "rgba(0,0,0,0.5)", alignItems: "center", justifyContent: "center" },
+  addMediaBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 12, paddingVertical: 12, borderRadius: theme.radius.pill, borderWidth: 1, borderColor: theme.brand, backgroundColor: theme.brandTint },
+  addMediaTxt: { ...type.caption, color: theme.brand, fontWeight: "700" },
 });

@@ -1,4 +1,7 @@
-# StageLink — Product Requirements & Architecture
+# StageLink — Product Requirements
+
+> **Architectural source of truth:** [`/app/docs/PROJECT_ARCHITECTURE.md`](../docs/PROJECT_ARCHITECTURE.md)
+> This file captures **product intent** only. Anything about folder structure, API surface, design tokens, testing, or conventions lives in `PROJECT_ARCHITECTURE.md` and should be updated there.
 
 ## Vision
 StageLink is a professional community + marketplace for the live entertainment industry — combining LinkedIn (identity), Instagram (community), Fiverr (services), and Airbnb (discovery). Users can perform, hire, rent gear, teach, own studios, run bands, and organize events — all from one account.

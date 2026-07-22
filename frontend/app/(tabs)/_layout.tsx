@@ -22,7 +22,7 @@ export default function TabsLayout() {
         ) : null,
         tabBarActiveTintColor: theme.text,
         tabBarInactiveTintColor: theme.textDim,
-        tabBarLabelStyle: { fontSize: 10, fontWeight: "600", marginBottom: 4 },
+        tabBarLabelStyle: { fontSize: 11, fontWeight: "600", letterSpacing: 0.1, marginBottom: 4 },
       }}
     >
       <Tabs.Screen name="index" options={{

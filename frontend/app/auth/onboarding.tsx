@@ -2,7 +2,7 @@ import { useState } from "react";
 import { View, Text, TextInput, Pressable, StyleSheet, ScrollView, ActivityIndicator, KeyboardAvoidingView, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@/src/context/AuthContext";
-import { theme } from "@/src/theme";
+import { theme, type } from "@/src/theme";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 const CITIES = ["Mumbai", "Bengaluru", "Delhi", "Pune", "Hyderabad", "Chennai", "Kolkata"];
@@ -131,19 +131,19 @@ export default function Onboarding() {
 
 const styles = StyleSheet.create({
   bg: { flex: 1, backgroundColor: theme.bg },
-  title: { color: theme.text, fontSize: 28, fontWeight: "800", letterSpacing: -0.5 },
-  sub: { color: theme.textDim, fontSize: 14, marginTop: 6, marginBottom: 20, lineHeight: 20 },
-  label: { color: theme.textMid, fontSize: 13, fontWeight: "600", marginBottom: 6, marginTop: 14 },
-  input: { backgroundColor: theme.bg2, borderColor: theme.border, borderWidth: 1, borderRadius: theme.radius.md, paddingHorizontal: 14, paddingVertical: 12, color: theme.text, fontSize: 15, marginTop: 8 },
+  title: { ...type.h1, color: theme.text, fontSize: 28 },
+  sub: { ...type.bodyMd, color: theme.textDim, marginTop: 6, marginBottom: 20 },
+  label: { ...type.label, color: theme.textMid, marginBottom: 6, marginTop: 14 },
+  input: { ...type.bodyMd, backgroundColor: theme.bg2, borderColor: theme.border, borderWidth: 1, borderRadius: theme.radius.md, paddingHorizontal: 14, paddingVertical: 12, color: theme.text, marginTop: 8 },
   chipRow: { flexDirection: "row", gap: 8, paddingVertical: 4 },
   chipWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 4 },
   chip: { flexShrink: 0, paddingHorizontal: 14, paddingVertical: 8, borderRadius: theme.radius.pill, backgroundColor: theme.bg2, borderWidth: 1, borderColor: theme.border },
   chipOn: { backgroundColor: theme.brandTint, borderColor: theme.brand },
-  chipTxt: { color: theme.textDim, fontSize: 13, fontWeight: "500" },
-  chipTxtOn: { color: theme.text, fontWeight: "600" },
+  chipTxt: { ...type.caption, color: theme.textDim, fontWeight: "500" },
+  chipTxtOn: { ...type.caption, color: theme.text, fontWeight: "600" },
   aiBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 6, borderRadius: theme.radius.pill, backgroundColor: theme.brandTint, borderWidth: 1, borderColor: theme.brand },
-  aiBtnTxt: { color: theme.brand, fontWeight: "600", fontSize: 12 },
+  aiBtnTxt: { ...type.tiny, color: theme.brand, fontWeight: "600" },
   cta: { backgroundColor: theme.brand, borderRadius: theme.radius.pill, paddingVertical: 16, marginTop: 28, alignItems: "center" },
-  ctaText: { color: "#fff", fontWeight: "700", fontSize: 16 },
-  err: { color: theme.error, marginTop: 12, fontSize: 13 },
+  ctaText: { ...type.titleMd, color: "#fff", fontWeight: "700" },
+  err: { ...type.caption, color: theme.error, marginTop: 12 },
 });

@@ -4,7 +4,7 @@ import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useAuth } from "@/src/context/AuthContext";
-import { theme } from "@/src/theme";
+import { theme, type } from "@/src/theme";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 type EntityType = "Gigs" | "Musicians" | "Bands" | "Studios" | "Equipment" | "Lessons" | "Venues";
@@ -177,23 +177,23 @@ const styles = StyleSheet.create({
   bg: { flex: 1, backgroundColor: theme.bg },
   center: { padding: 60, alignItems: "center", justifyContent: "center" },
   header: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 12 },
-  h1: { color: theme.text, fontSize: 26, fontWeight: "800", letterSpacing: -0.5 },
+  h1: { ...type.h1, color: theme.text, fontSize: 26 },
   searchWrap: { flexDirection: "row", alignItems: "center", backgroundColor: theme.bg2, paddingHorizontal: 14, borderRadius: theme.radius.pill, borderWidth: 1, borderColor: theme.border, gap: 8, marginTop: 12 },
-  search: { flex: 1, color: theme.text, paddingVertical: 12, fontSize: 14 },
+  search: { ...type.bodySm, flex: 1, color: theme.text, paddingVertical: 12 },
   chipRow: { paddingHorizontal: 20, gap: 8, paddingVertical: 8 },
   chip: { flexShrink: 0, height: 36, paddingHorizontal: 14, borderRadius: theme.radius.pill, backgroundColor: theme.bg2, borderWidth: 1, borderColor: theme.border, alignItems: "center", justifyContent: "center" },
   chipOn: { backgroundColor: theme.brandTint, borderColor: theme.brand },
-  chipTxt: { color: theme.textDim, fontSize: 13, fontWeight: "500" },
-  chipTxtOn: { color: theme.text, fontWeight: "700" },
+  chipTxt: { ...type.caption, color: theme.textDim, fontWeight: "500" },
+  chipTxtOn: { ...type.caption, color: theme.text, fontWeight: "700" },
   card: { backgroundColor: theme.bg2, borderRadius: theme.radius.lg, overflow: "hidden", borderWidth: 1, borderColor: theme.border },
   tag: { position: "absolute", top: 12, right: 12, backgroundColor: "rgba(9,9,11,0.7)", paddingHorizontal: 10, paddingVertical: 4, borderRadius: theme.radius.pill },
-  tagTxt: { color: theme.text, fontSize: 10, fontWeight: "700", letterSpacing: 0.4 },
+  tagTxt: { ...type.tiny, color: theme.text, fontWeight: "700", letterSpacing: 0.4 },
   body: { padding: 14 },
-  title: { color: theme.text, fontSize: 15, fontWeight: "700" },
-  meta: { color: theme.textDim, fontSize: 12, marginTop: 4 },
-  price: { color: theme.brand, fontSize: 15, fontWeight: "800", marginTop: 8 },
+  title: { ...type.titleMd, color: theme.text, fontWeight: "700" },
+  meta: { ...type.caption, color: theme.textDim, marginTop: 4 },
+  price: { ...type.titleMd, color: theme.brand, fontWeight: "800", marginTop: 8 },
   avatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: theme.bg3, alignItems: "center", justifyContent: "center", overflow: "hidden" },
   pillRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 },
   pill: { backgroundColor: theme.brandTint, borderColor: theme.brand, borderWidth: 1, paddingHorizontal: 8, paddingVertical: 3, borderRadius: theme.radius.pill },
-  pillTxt: { color: theme.brand, fontSize: 10, fontWeight: "700" },
+  pillTxt: { ...type.tiny, color: theme.brand, fontWeight: "700" },
 });
