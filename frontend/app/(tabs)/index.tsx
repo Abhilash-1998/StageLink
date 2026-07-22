@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, FlatList, RefreshControl, ActivityIndicator, ImageBackground, TextInput } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable, RefreshControl, ActivityIndicator, Image, ImageBackground, FlatList } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
@@ -7,159 +7,166 @@ import { useAuth } from "@/src/context/AuthContext";
 import { theme } from "@/src/theme";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-const GENRES = ["All", "Jazz", "Pop", "Rock", "Indie", "EDM", "Classical", "Fusion", "R&B", "Soul"];
-const CITIES = ["All", "Mumbai", "Bengaluru", "Delhi"];
-
-type Gig = {
-  id: string; title: string; city: string; date: string; event_type: string;
-  genre: string; instrument_needed: string; budget: number; description: string;
-  cover_url?: string; featured?: boolean;
+type Post = {
+  id: string; author_name: string; author_avatar?: string | null;
+  text: string; media_url?: string | null; media_type?: string | null;
+  like_count: number; comment_count: number; liked: boolean; created_at: string;
 };
 
-export default function Discover() {
+export default function Home() {
   const { user, fetchApi } = useAuth();
-  const isOrg = user?.active_role === "organizer";
-  const [gigs, setGigs] = useState<Gig[]>([]);
-  const [recos, setRecos] = useState<Gig[]>([]);
+  const [recs, setRecs] = useState<any[]>([]);
+  const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [genre, setGenre] = useState("All");
-  const [city, setCity] = useState("All");
-  const [q, setQ] = useState("");
+  const [homeData, setHomeData] = useState<any>(null);
 
   const load = useCallback(async () => {
-    const params = new URLSearchParams();
-    if (genre !== "All") params.set("genre", genre);
-    if (city !== "All") params.set("city", city);
-    if (q.trim()) params.set("q", q.trim());
-    const data: Gig[] = await fetchApi(`/gigs?${params.toString()}`);
-    setGigs(data);
-    if (!isOrg) {
-      try {
-        const r: Gig[] = await fetchApi("/ai/recommendations", { method: "POST", body: JSON.stringify({ limit: 3 }) });
-        setRecos(r);
-      } catch {}
-    }
-  }, [fetchApi, genre, city, q, isOrg]);
+    const [rc, feed, home] = await Promise.all([
+      fetchApi<any[]>("/ai/recommendations", { method: "POST", body: JSON.stringify({}) }).catch(() => []),
+      fetchApi<Post[]>("/posts/feed").catch(() => []),
+      fetchApi<any>("/home").catch(() => null),
+    ]);
+    setRecs(rc); setPosts(feed); setHomeData(home);
+  }, [fetchApi]);
 
   useEffect(() => { load().finally(() => setLoading(false)); }, [load]);
+  const onRefresh = async () => { setRefreshing(true); try { await load(); } finally { setRefreshing(false); } };
 
-  const onRefresh = async () => {
-    setRefreshing(true);
-    try { await load(); } finally { setRefreshing(false); }
+  const toggleLike = async (pid: string) => {
+    setPosts(prev => prev.map(p => p.id === pid ? { ...p, liked: !p.liked, like_count: p.like_count + (p.liked ? -1 : 1) } : p));
+    try { await fetchApi(`/posts/${pid}/like`, { method: "POST" }); } catch {}
   };
 
-  if (loading) return (
-    <SafeAreaView style={styles.bg}><View style={styles.center}><ActivityIndicator color={theme.brand} /></View></SafeAreaView>
-  );
+  if (loading) return <SafeAreaView style={styles.bg}><View style={styles.center}><ActivityIndicator color={theme.brand} /></View></SafeAreaView>;
 
-  const featured = gigs.find(g => g.featured) || gigs[0];
+  const initials = user?.full_name?.split(" ").slice(0, 2).map(n => n[0]).join("").toUpperCase();
+  const upcoming = homeData?.upcoming || [];
+  const metrics = homeData?.metrics || {};
 
   return (
     <SafeAreaView style={styles.bg} edges={["top"]}>
-      <FlatList
-        data={gigs}
-        keyExtractor={g => g.id}
-        contentContainerStyle={{ paddingBottom: 120 }}
+      <ScrollView
+        contentContainerStyle={{ paddingBottom: 130 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.brand} />}
-        ListHeaderComponent={
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.header}>
           <View>
-            <View style={styles.header}>
-              <View>
-                <Text style={styles.hi}>Hello, {user?.full_name?.split(" ")[0]}</Text>
-                <Text style={styles.h1}>{isOrg ? "Book brilliant talent" : "Find your next stage"}</Text>
-              </View>
-              {isOrg && (
-                <Pressable testID="create-gig-fab" onPress={() => router.push("/gig/new")} style={styles.fab}>
-                  <Ionicons name="add" size={22} color="#fff" />
-                </Pressable>
-              )}
-            </View>
-
-            <View style={styles.searchWrap}>
-              <Ionicons name="search" size={16} color={theme.textDim} />
-              <TextInput testID="search-input" style={styles.search} value={q} onChangeText={setQ} onSubmitEditing={load} placeholder="Search gigs, genres…" placeholderTextColor={theme.textDim} />
-            </View>
-
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
-              {CITIES.map(c => (
-                <Pressable key={c} testID={`city-chip-${c}`} onPress={() => setCity(c)} style={[styles.chip, city === c && styles.chipOn]}>
-                  <Text style={[styles.chipTxt, city === c && styles.chipTxtOn]}>{c}</Text>
-                </Pressable>
-              ))}
-            </ScrollView>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
-              {GENRES.map(g => (
-                <Pressable key={g} testID={`genre-chip-${g}`} onPress={() => setGenre(g)} style={[styles.chip, genre === g && styles.chipOn]}>
-                  <Text style={[styles.chipTxt, genre === g && styles.chipTxtOn]}>{g}</Text>
-                </Pressable>
-              ))}
-            </ScrollView>
-
-            {featured && !isOrg && (
-              <Pressable testID="featured-gig" onPress={() => router.push(`/gig/${featured.id}`)} style={styles.heroCard}>
-                <ImageBackground source={{ uri: featured.cover_url }} style={StyleSheet.absoluteFill} imageStyle={{ borderRadius: theme.radius.lg }} />
-                <LinearGradient colors={["rgba(9,9,11,0.1)", "rgba(9,9,11,0.95)"]} style={[StyleSheet.absoluteFill, { borderRadius: theme.radius.lg }]} />
-                <View style={styles.heroBadge}>
-                  <Ionicons name="star" size={11} color={theme.brand} />
-                  <Text style={styles.heroBadgeTxt}>Featured</Text>
-                </View>
-                <View style={styles.heroInner}>
-                  <Text style={styles.heroTitle}>{featured.title}</Text>
-                  <Text style={styles.heroMeta}>{featured.city} · ₹{featured.budget.toLocaleString("en-IN")} · {featured.event_type}</Text>
-                </View>
-              </Pressable>
-            )}
-
-            {recos.length > 0 && !isOrg && (
-              <View style={{ marginTop: 24 }}>
-                <View style={styles.sectionRow}>
-                  <Ionicons name="sparkles" size={14} color={theme.brand} />
-                  <Text style={styles.sectionTitle}>Picked for you</Text>
-                </View>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20, gap: 12 }}>
-                  {recos.map(r => (
-                    <Pressable key={r.id} testID={`reco-${r.id}`} onPress={() => router.push(`/gig/${r.id}`)} style={styles.recoCard}>
-                      <ImageBackground source={{ uri: r.cover_url }} style={StyleSheet.absoluteFill} imageStyle={{ borderRadius: theme.radius.md }} />
-                      <LinearGradient colors={["transparent", "rgba(9,9,11,0.95)"]} style={[StyleSheet.absoluteFill, { borderRadius: theme.radius.md }]} />
-                      <View style={styles.recoInner}>
-                        <Text style={styles.recoTitle} numberOfLines={2}>{r.title}</Text>
-                        <Text style={styles.recoMeta}>₹{r.budget.toLocaleString("en-IN")}</Text>
-                      </View>
-                    </Pressable>
-                  ))}
-                </ScrollView>
-              </View>
-            )}
-
-            <View style={styles.sectionRow}>
-              <Text style={styles.sectionTitle}>{isOrg ? "All open gigs" : "Available gigs"}</Text>
-              <Text style={styles.count}>{gigs.length}</Text>
-            </View>
+            <Text style={styles.hi}>Welcome back</Text>
+            <Text style={styles.name}>{user?.full_name?.split(" ")[0]}</Text>
           </View>
-        }
-        renderItem={({ item }) => (
-          <Pressable testID={`gig-card-${item.id}`} onPress={() => router.push(`/gig/${item.id}`)} style={styles.gigCard}>
-            <ImageBackground source={{ uri: item.cover_url }} style={{ height: 130 }} imageStyle={{ borderTopLeftRadius: theme.radius.lg, borderTopRightRadius: theme.radius.lg }}>
-              <LinearGradient colors={["transparent", "rgba(9,9,11,0.85)"]} style={StyleSheet.absoluteFill} />
-              <View style={styles.gigTag}><Text style={styles.gigTagTxt}>{item.event_type.toUpperCase()}</Text></View>
-            </ImageBackground>
-            <View style={styles.gigBody}>
-              <Text style={styles.gigTitle} numberOfLines={1}>{item.title}</Text>
-              <View style={styles.metaRow}>
-                <Ionicons name="location-outline" size={13} color={theme.textDim} /><Text style={styles.meta}>{item.city}</Text>
-                <View style={styles.dot} />
-                <Ionicons name="calendar-outline" size={13} color={theme.textDim} /><Text style={styles.meta}>{item.date}</Text>
-              </View>
-              <View style={styles.metaRow}>
-                <Ionicons name="musical-notes-outline" size={13} color={theme.textDim} /><Text style={styles.meta}>{item.genre} · {item.instrument_needed}</Text>
-              </View>
-              <Text style={styles.price}>₹{item.budget.toLocaleString("en-IN")}</Text>
-            </View>
+          <Pressable testID="home-avatar" onPress={() => router.push("/(tabs)/profile")} style={styles.avatar}>
+            {user?.avatar_url ? <Image source={{ uri: user.avatar_url }} style={{ width: "100%", height: "100%" }} /> :
+              <Text style={styles.avatarTxt}>{initials}</Text>}
           </Pressable>
+        </View>
+
+        {/* Quick actions */}
+        <View style={styles.quickRow}>
+          <Pressable testID="qa-apps" onPress={() => router.push("/(tabs)/applications")} style={styles.qCard}>
+            <Ionicons name="briefcase" size={16} color={theme.brand} />
+            <Text style={styles.qLbl}>Applications</Text>
+            <Text style={styles.qVal}>{metrics.applications ?? 0}</Text>
+          </Pressable>
+          <Pressable testID="qa-rating" onPress={() => router.push("/(tabs)/profile")} style={styles.qCard}>
+            <Ionicons name="star" size={16} color={theme.brand} />
+            <Text style={styles.qLbl}>Rating</Text>
+            <Text style={styles.qVal}>{metrics.rating ?? "0.0"}</Text>
+          </Pressable>
+          <Pressable testID="qa-followers" onPress={() => router.push("/(tabs)/profile")} style={styles.qCard}>
+            <Ionicons name="people" size={16} color={theme.brand} />
+            <Text style={styles.qLbl}>Followers</Text>
+            <Text style={styles.qVal}>{metrics.followers ?? 0}</Text>
+          </Pressable>
+        </View>
+
+        {/* Upcoming bookings */}
+        {upcoming.length > 0 && (
+          <View style={{ marginTop: 20 }}>
+            <View style={styles.sectionRow}>
+              <Ionicons name="calendar" size={14} color={theme.brand} />
+              <Text style={styles.sectionTitle}>Upcoming</Text>
+            </View>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20, gap: 12 }}>
+              {upcoming.map((g: any) => (
+                <Pressable key={g.id} testID={`up-${g.id}`} onPress={() => router.push(`/gig/${g.id}`)} style={styles.upCard}>
+                  <ImageBackground source={{ uri: g.cover_url }} style={StyleSheet.absoluteFill} imageStyle={{ borderRadius: theme.radius.md }} />
+                  <LinearGradient colors={["transparent", "rgba(9,9,11,0.95)"]} style={[StyleSheet.absoluteFill, { borderRadius: theme.radius.md }]} />
+                  <View style={styles.upInner}>
+                    <Text style={styles.upDate}>{g.date}</Text>
+                    <Text style={styles.upTitle} numberOfLines={1}>{g.title}</Text>
+                  </View>
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
         )}
-        ListEmptyComponent={<View style={{ padding: 40, alignItems: "center" }}><Text style={{ color: theme.textDim }}>No gigs found. Try different filters.</Text></View>}
-      />
+
+        {/* Recommended gigs */}
+        {recs.length > 0 && (
+          <View style={{ marginTop: 22 }}>
+            <View style={styles.sectionRow}>
+              <Ionicons name="sparkles" size={14} color={theme.brand} />
+              <Text style={styles.sectionTitle}>Picked for you</Text>
+              <Pressable onPress={() => router.push("/(tabs)/discover")}><Text style={styles.link}>See all</Text></Pressable>
+            </View>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20, gap: 12 }}>
+              {recs.map((r: any) => (
+                <Pressable key={r.id} testID={`reco-${r.id}`} onPress={() => router.push(`/gig/${r.id}`)} style={styles.recoCard}>
+                  <ImageBackground source={{ uri: r.cover_url }} style={StyleSheet.absoluteFill} imageStyle={{ borderRadius: theme.radius.md }} />
+                  <LinearGradient colors={["transparent", "rgba(9,9,11,0.95)"]} style={[StyleSheet.absoluteFill, { borderRadius: theme.radius.md }]} />
+                  <View style={styles.recoInner}>
+                    <Text style={styles.recoTitle} numberOfLines={2}>{r.title}</Text>
+                    <Text style={styles.recoMeta}>{r.city} · ₹{r.budget.toLocaleString("en-IN")}</Text>
+                  </View>
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
+        )}
+
+        {/* Community feed */}
+        <View style={{ marginTop: 22 }}>
+          <View style={styles.sectionRow}>
+            <Ionicons name="flame" size={14} color={theme.brand} />
+            <Text style={styles.sectionTitle}>Community</Text>
+            <Pressable testID="new-post-btn" onPress={() => router.push("/(tabs)/create")}><Text style={styles.link}>Share</Text></Pressable>
+          </View>
+          {posts.length === 0 && <Text style={styles.empty}>No posts yet — be the first to share.</Text>}
+          {posts.map(p => (
+            <View key={p.id} style={styles.postCard} testID={`post-${p.id}`}>
+              <View style={styles.postHead}>
+                <View style={styles.postAvatar}>
+                  {p.author_avatar ? <Image source={{ uri: p.author_avatar }} style={{ width: "100%", height: "100%" }} /> :
+                    <Text style={{ color: theme.text, fontWeight: "700" }}>{p.author_name[0]}</Text>}
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.postAuthor}>{p.author_name}</Text>
+                  <Text style={styles.postTime}>{new Date(p.created_at).toLocaleDateString()}</Text>
+                </View>
+              </View>
+              <Text style={styles.postText}>{p.text}</Text>
+              {p.media_url && (
+                <Image source={{ uri: p.media_url }} style={styles.postMedia} />
+              )}
+              <View style={styles.postActions}>
+                <Pressable testID={`like-${p.id}`} onPress={() => toggleLike(p.id)} style={styles.postAction}>
+                  <Ionicons name={p.liked ? "heart" : "heart-outline"} size={19} color={p.liked ? theme.brand : theme.textDim} />
+                  <Text style={[styles.postActionTxt, p.liked && { color: theme.brand }]}>{p.like_count}</Text>
+                </Pressable>
+                <View style={styles.postAction}>
+                  <Ionicons name="chatbubble-outline" size={17} color={theme.textDim} />
+                  <Text style={styles.postActionTxt}>{p.comment_count}</Text>
+                </View>
+                <View style={styles.postAction}>
+                  <Ionicons name="share-outline" size={19} color={theme.textDim} />
+                </View>
+              </View>
+            </View>
+          ))}
+        </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -167,37 +174,35 @@ export default function Discover() {
 const styles = StyleSheet.create({
   bg: { flex: 1, backgroundColor: theme.bg },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
-  header: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", paddingHorizontal: 20, paddingTop: 8, paddingBottom: 12 },
-  hi: { color: theme.textDim, fontSize: 13, marginBottom: 4 },
-  h1: { color: theme.text, fontSize: 28, fontWeight: "800", letterSpacing: -0.5 },
-  fab: { width: 44, height: 44, borderRadius: 22, backgroundColor: theme.brand, alignItems: "center", justifyContent: "center" },
-  searchWrap: { flexDirection: "row", alignItems: "center", backgroundColor: theme.bg2, marginHorizontal: 20, paddingHorizontal: 14, borderRadius: theme.radius.pill, borderWidth: 1, borderColor: theme.border, gap: 8 },
-  search: { flex: 1, color: theme.text, paddingVertical: 12, fontSize: 14 },
-  chipRow: { paddingHorizontal: 20, gap: 8, paddingVertical: 10 },
-  chip: { flexShrink: 0, height: 36, paddingHorizontal: 14, borderRadius: theme.radius.pill, backgroundColor: theme.bg2, borderWidth: 1, borderColor: theme.border, alignItems: "center", justifyContent: "center" },
-  chipOn: { backgroundColor: theme.brandTint, borderColor: theme.brand },
-  chipTxt: { color: theme.textDim, fontSize: 13, fontWeight: "500" },
-  chipTxtOn: { color: theme.text, fontWeight: "600" },
-  heroCard: { height: 190, marginHorizontal: 20, marginTop: 10, borderRadius: theme.radius.lg, overflow: "hidden" },
-  heroBadge: { position: "absolute", top: 14, left: 14, flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: "rgba(9,9,11,0.7)", paddingHorizontal: 10, paddingVertical: 5, borderRadius: theme.radius.pill, borderWidth: 1, borderColor: theme.brand },
-  heroBadgeTxt: { color: theme.brand, fontSize: 11, fontWeight: "700" },
-  heroInner: { position: "absolute", bottom: 16, left: 16, right: 16 },
-  heroTitle: { color: theme.text, fontSize: 22, fontWeight: "800", letterSpacing: -0.3 },
-  heroMeta: { color: theme.textMid, fontSize: 13, marginTop: 4 },
-  sectionRow: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 20, marginTop: 20, marginBottom: 12, justifyContent: "space-between" },
-  sectionTitle: { color: theme.text, fontSize: 17, fontWeight: "700", flex: 1, marginLeft: 4 },
-  count: { color: theme.textDim, fontSize: 13 },
+  header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 20, paddingTop: 8, paddingBottom: 8 },
+  hi: { color: theme.textDim, fontSize: 13 },
+  name: { color: theme.text, fontSize: 26, fontWeight: "800", letterSpacing: -0.5, marginTop: 2 },
+  avatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: theme.bg2, borderWidth: 1, borderColor: theme.border, alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  avatarTxt: { color: theme.text, fontWeight: "700", fontSize: 14 },
+  quickRow: { flexDirection: "row", paddingHorizontal: 16, gap: 10, marginTop: 8 },
+  qCard: { flex: 1, backgroundColor: theme.bg2, borderRadius: theme.radius.md, padding: 14, borderWidth: 1, borderColor: theme.border },
+  qLbl: { color: theme.textDim, fontSize: 11, marginTop: 8 },
+  qVal: { color: theme.text, fontSize: 20, fontWeight: "800", marginTop: 2, letterSpacing: -0.3 },
+  sectionRow: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 20, marginBottom: 12 },
+  sectionTitle: { color: theme.text, fontSize: 16, fontWeight: "700", flex: 1 },
+  link: { color: theme.brand, fontSize: 13, fontWeight: "600" },
+  upCard: { width: 200, height: 100, borderRadius: theme.radius.md, overflow: "hidden" },
+  upInner: { position: "absolute", bottom: 10, left: 12, right: 12 },
+  upDate: { color: theme.brand, fontSize: 11, fontWeight: "700" },
+  upTitle: { color: theme.text, fontSize: 14, fontWeight: "700", marginTop: 2 },
   recoCard: { width: 170, height: 200, borderRadius: theme.radius.md, overflow: "hidden" },
   recoInner: { position: "absolute", bottom: 12, left: 12, right: 12 },
   recoTitle: { color: theme.text, fontSize: 14, fontWeight: "700" },
-  recoMeta: { color: theme.brand, fontSize: 13, fontWeight: "700", marginTop: 4 },
-  gigCard: { marginHorizontal: 20, marginBottom: 14, backgroundColor: theme.bg2, borderRadius: theme.radius.lg, overflow: "hidden", borderWidth: 1, borderColor: theme.border },
-  gigTag: { position: "absolute", top: 12, right: 12, backgroundColor: "rgba(9,9,11,0.7)", paddingHorizontal: 10, paddingVertical: 4, borderRadius: theme.radius.pill },
-  gigTagTxt: { color: theme.text, fontSize: 10, fontWeight: "700", letterSpacing: 0.5 },
-  gigBody: { padding: 14 },
-  gigTitle: { color: theme.text, fontSize: 16, fontWeight: "700" },
-  metaRow: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 6 },
-  meta: { color: theme.textDim, fontSize: 12 },
-  dot: { width: 3, height: 3, borderRadius: 2, backgroundColor: theme.textDim, marginHorizontal: 5 },
-  price: { color: theme.brand, fontSize: 18, fontWeight: "800", marginTop: 8 },
+  recoMeta: { color: theme.brand, fontSize: 12, fontWeight: "600", marginTop: 4 },
+  empty: { color: theme.textDim, fontSize: 13, textAlign: "center", paddingVertical: 20, paddingHorizontal: 20 },
+  postCard: { marginHorizontal: 20, marginBottom: 14, backgroundColor: theme.bg2, borderRadius: theme.radius.lg, padding: 14, borderWidth: 1, borderColor: theme.border },
+  postHead: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 10 },
+  postAvatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: theme.bg3, alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  postAuthor: { color: theme.text, fontSize: 14, fontWeight: "700" },
+  postTime: { color: theme.textDim, fontSize: 11, marginTop: 2 },
+  postText: { color: theme.textMid, fontSize: 14, lineHeight: 21 },
+  postMedia: { width: "100%", height: 220, borderRadius: theme.radius.md, marginTop: 10 },
+  postActions: { flexDirection: "row", gap: 20, marginTop: 12 },
+  postAction: { flexDirection: "row", alignItems: "center", gap: 5 },
+  postActionTxt: { color: theme.textDim, fontSize: 13, fontWeight: "600" },
 });

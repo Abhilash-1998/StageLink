@@ -137,6 +137,49 @@ class AIPricingIn(BaseModel):
     genres: List[str]
     instruments: List[str]
 
+# ================== Entity Models ==================
+class BandIn(BaseModel):
+    name: str
+    city: str
+    genres: List[str] = []
+    description: Optional[str] = ""
+    cover_url: Optional[str] = None
+    looking_for: List[str] = []
+
+class EquipmentIn(BaseModel):
+    title: str
+    listing_type: Literal['rent', 'sale']
+    category: str  # guitar, mic, monitor, etc.
+    city: str
+    price: int
+    description: str
+    cover_url: Optional[str] = None
+
+class StudioIn(BaseModel):
+    name: str
+    city: str
+    hourly_rate: int
+    description: str
+    cover_url: Optional[str] = None
+
+class LessonIn(BaseModel):
+    title: str
+    subject: str  # instrument or theory area
+    city: str
+    price_per_hour: int
+    format: Literal['online', 'in-person', 'both'] = 'both'
+    description: str
+    cover_url: Optional[str] = None
+
+class PostIn(BaseModel):
+    text: str
+    media_url: Optional[str] = None
+    media_type: Optional[Literal['image', 'video']] = None
+
+class CommentIn(BaseModel):
+    post_id: str
+    text: str
+
 # ================== Helpers ==================
 def now_iso():
     return datetime.now(timezone.utc).isoformat()
@@ -272,10 +315,12 @@ async def set_roles(inp: RolesIn, u=Depends(get_user)):
 
 @api.post("/auth/active-role", response_model=UserOut)
 async def set_active_role(inp: ActiveRoleIn, u=Depends(get_user)):
-    if inp.active_role not in u.get('roles', []):
-        raise HTTPException(400, "Role not enabled on this account")
-    if not u.get('onboarded'):
-        raise HTTPException(400, "Complete profile before switching roles")
+    # Ensure role is available; auto-add if missing (action-based model)
+    roles = u.get('roles', [])
+    if inp.active_role not in roles:
+        roles = list(dict.fromkeys([*roles, inp.active_role]))
+        await db.users.update_one({'id': u['id']}, {'$set': {'roles': roles}})
+        u['roles'] = roles
     await db.users.update_one({'id': u['id']}, {'$set': {'active_role': inp.active_role}})
     u['active_role'] = inp.active_role
     return user_public(u)
@@ -364,8 +409,7 @@ async def list_venues(city: Optional[str] = None, q: Optional[str] = None, limit
 # ================== Gigs ==================
 @api.post("/gigs")
 async def create_gig(inp: GigCreate, u=Depends(get_user)):
-    if 'organizer' not in u.get('roles', []):
-        raise HTTPException(403, "Only organizers can create gigs")
+    # Action-based: any user can post a hiring gig
     gid = str(uuid.uuid4())
     doc = inp.dict()
     doc.update({'id': gid, 'organizer_id': u['id'], 'status': 'open',
@@ -411,8 +455,7 @@ async def my_gigs(u=Depends(get_user)):
 # ================== Applications ==================
 @api.post("/applications")
 async def apply(inp: ApplicationIn, u=Depends(get_user)):
-    if 'musician' not in u.get('roles', []):
-        raise HTTPException(403, "Only musicians can apply")
+    # Action-based: any user can apply
     g = await db.gigs.find_one({'id': inp.gig_id})
     if not g: raise HTTPException(404, "Gig not found")
     if await db.applications.find_one({'gig_id': inp.gig_id, 'musician_id': u['id']}):
@@ -695,7 +738,7 @@ async def do_seed():
     for o in orgs:
         uid = str(uuid.uuid4())
         await db.users.insert_one({'id': uid, 'email': o['email'], 'full_name': o['full_name'],
-                                   'password_hash': hash_pw('demo1234'), 'roles': ['organizer'],
+                                   'password_hash': hash_pw('demo1234'), 'roles': ['organizer', 'musician'],
                                    'active_role': 'organizer', 'onboarded': True,
                                    'verified': True, 'premium': False,
                                    'avatar_url': None, 'created_at': now_iso()})
@@ -729,7 +772,8 @@ async def do_seed():
         musician_ids.append(uid)
         await db.users.insert_one({'id': uid, 'email': m['name'].lower().replace(' ', '.') + '@stagelink.dev',
                                    'full_name': m['name'], 'password_hash': hash_pw('demo1234'),
-                                   'roles': ['musician'], 'active_role': 'musician', 'onboarded': True,
+                                   'roles': ['musician', 'organizer'],
+                                   'active_role': 'musician', 'onboarded': True,
                                    'verified': i < 3, 'premium': i < 2,
                                    'avatar_url': m['avatar'], 'created_at': now_iso()})
         await db.musicians.insert_one({'user_id': uid,
@@ -807,12 +851,246 @@ async def do_seed():
                                       'text': "Absolutely — send me the venue details please.",
                                       'read': True, 'created_at': now_iso()})
 
+        # Community posts
+        posts_seed = [
+            {'author_idx': 0, 'text': "Rooftop rehearsal at sunset. New setlist coming together beautifully.",
+             'media_url': "https://images.unsplash.com/photo-1470229722913-7c0e2dbbafd3?w=800", 'media_type': 'image'},
+            {'author_idx': 1, 'text': "Finally got the pedalboard dialed in — try this signal chain if you want warmth without mud.",
+             'media_url': "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=800", 'media_type': 'image'},
+            {'author_idx': 2, 'text': "Backstage before the Diwali fusion set. What a night ahead.",
+             'media_url': "https://images.unsplash.com/photo-1533174072545-7a4b6ad7a6c3?w=800", 'media_type': 'image'},
+            {'author_idx': 3, 'text': "Dropped a new house edit on my page. Feedback welcome — this one's for the warehouse crowd.",
+             'media_url': None, 'media_type': None},
+        ]
+        for p in posts_seed:
+            aid = musician_ids[p['author_idx']]
+            ax_user = await db.users.find_one({'id': aid})
+            await db.posts.insert_one({'id': str(uuid.uuid4()), 'author_id': aid,
+                                       'author_name': ax_user['full_name'],
+                                       'author_avatar': ax_user.get('avatar_url'),
+                                       'text': p['text'], 'media_url': p['media_url'],
+                                       'media_type': p['media_type'],
+                                       'like_count': 12 + (p['author_idx'] * 5),
+                                       'comment_count': 2 + p['author_idx'],
+                                       'created_at': now_iso()})
+
+        # Bands
+        await db.bands.insert_one({'id': str(uuid.uuid4()), 'name': 'Midnight Kolaba',
+                                   'owner_id': musician_ids[0], 'city': 'Mumbai',
+                                   'genres': ['Jazz', 'Soul'],
+                                   'description': '4-piece live band for luxury weddings and rooftop events.',
+                                   'cover_url': 'https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=800',
+                                   'looking_for': ['Bassist'], 'members': [musician_ids[0]],
+                                   'created_at': now_iso()})
+        await db.bands.insert_one({'id': str(uuid.uuid4()), 'name': 'Static Signal',
+                                   'owner_id': musician_ids[1], 'city': 'Bengaluru',
+                                   'genres': ['Indie', 'Rock'],
+                                   'description': 'Indie rock outfit playing tech offsites and pubs.',
+                                   'cover_url': 'https://images.unsplash.com/photo-1429962714451-bb934ecdc4ec?w=800',
+                                   'looking_for': ['Drummer', 'Keys'], 'members': [musician_ids[1]],
+                                   'created_at': now_iso()})
+
+        # Equipment
+        eqs = [
+            {'title': 'Fender Stratocaster (2019) — Mint', 'listing_type': 'sale', 'category': 'Guitar',
+             'city': 'Mumbai', 'price': 68000, 'owner_id': musician_ids[1],
+             'description': 'American Standard, includes hard case. Barely gigged.',
+             'cover_url': 'https://images.unsplash.com/photo-1510915361894-db8b60106cb1?w=800'},
+            {'title': 'Shure SM58 x 4 — Rent', 'listing_type': 'rent', 'category': 'Mic',
+             'city': 'Bengaluru', 'price': 500, 'owner_id': musician_ids[4],
+             'description': '4 SM58s + XLR cables. Per day rate.',
+             'cover_url': 'https://images.unsplash.com/photo-1590602846989-a3ff5a1f45f2?w=800'},
+            {'title': 'Pioneer CDJ-3000 pair — Rent', 'listing_type': 'rent', 'category': 'DJ',
+             'city': 'Mumbai', 'price': 6000, 'owner_id': musician_ids[3],
+             'description': 'Latest CDJs + DJM-900 mixer. Per event rental.',
+             'cover_url': 'https://images.unsplash.com/photo-1571266028243-e4bb35f01e9d?w=800'},
+        ]
+        for e in eqs:
+            await db.equipment.insert_one({**e, 'id': str(uuid.uuid4()), 'created_at': now_iso()})
+
+        # Studios
+        await db.studios.insert_one({'id': str(uuid.uuid4()), 'name': 'Loft Studios',
+                                     'owner_id': org_ids[0], 'city': 'Mumbai',
+                                     'hourly_rate': 1500,
+                                     'description': 'Vintage-tuned live room + control room. Great for indie sessions.',
+                                     'cover_url': 'https://images.unsplash.com/photo-1598488035139-bdbb2231ce04?w=800',
+                                     'created_at': now_iso()})
+
+        # Lessons
+        await db.lessons.insert_one({'id': str(uuid.uuid4()), 'title': 'Modern Vocal Coaching',
+                                     'teacher_id': musician_ids[0], 'subject': 'Vocals',
+                                     'city': 'Mumbai', 'price_per_hour': 1200, 'format': 'both',
+                                     'description': 'Contemporary vocal technique — jazz, pop, soul. All levels.',
+                                     'cover_url': 'https://images.unsplash.com/photo-1516280440614-37939bbacd81?w=800',
+                                     'created_at': now_iso()})
+        await db.lessons.insert_one({'id': str(uuid.uuid4()), 'title': 'Fingerstyle Guitar Intensive',
+                                     'teacher_id': musician_ids[1], 'subject': 'Guitar',
+                                     'city': 'Bengaluru', 'price_per_hour': 900, 'format': 'online',
+                                     'description': 'Fingerstyle fundamentals, arrangement, tone. 8-week course.',
+                                     'cover_url': 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=800',
+                                     'created_at': now_iso()})
+
     await seed_venues()
 
 # ================== Root ==================
 @api.get("/")
 async def root():
     return {'app': 'StageLink API', 'version': '2.0'}
+
+# ================== Entities: Bands / Equipment / Studios / Lessons ==================
+async def _list_entity(coll, city, q, category=None, listing_type=None, limit=100):
+    query = {}
+    if city and city != 'All': query['city'] = {'$regex': city, '$options': 'i'}
+    if category: query['category'] = category
+    if listing_type: query['listing_type'] = listing_type
+    if q:
+        query['$or'] = [{'title': {'$regex': q, '$options': 'i'}},
+                        {'name': {'$regex': q, '$options': 'i'}},
+                        {'description': {'$regex': q, '$options': 'i'}}]
+    return await coll.find(query, {'_id': 0}).sort('created_at', -1).limit(limit).to_list(limit)
+
+@api.post("/bands")
+async def create_band(inp: BandIn, u=Depends(get_user)):
+    bid = str(uuid.uuid4())
+    doc = {**inp.dict(), 'id': bid, 'owner_id': u['id'], 'created_at': now_iso(),
+           'members': [u['id']]}
+    await db.bands.insert_one(doc)
+    doc.pop('_id', None)
+    return doc
+
+@api.get("/bands")
+async def list_bands(city: Optional[str] = None, q: Optional[str] = None):
+    return await _list_entity(db.bands, city, q)
+
+@api.get("/bands/{bid}")
+async def get_band(bid: str):
+    d = await db.bands.find_one({'id': bid}, {'_id': 0})
+    if not d: raise HTTPException(404, "Not found")
+    return d
+
+@api.post("/equipment")
+async def create_equipment(inp: EquipmentIn, u=Depends(get_user)):
+    eid = str(uuid.uuid4())
+    doc = {**inp.dict(), 'id': eid, 'owner_id': u['id'], 'created_at': now_iso()}
+    await db.equipment.insert_one(doc)
+    doc.pop('_id', None)
+    return doc
+
+@api.get("/equipment")
+async def list_equipment(city: Optional[str] = None, q: Optional[str] = None,
+                          category: Optional[str] = None,
+                          listing_type: Optional[str] = None):
+    return await _list_entity(db.equipment, city, q, category=category, listing_type=listing_type)
+
+@api.get("/equipment/{eid}")
+async def get_equipment(eid: str):
+    d = await db.equipment.find_one({'id': eid}, {'_id': 0})
+    if not d: raise HTTPException(404, "Not found")
+    return d
+
+@api.post("/studios")
+async def create_studio(inp: StudioIn, u=Depends(get_user)):
+    sid = str(uuid.uuid4())
+    doc = {**inp.dict(), 'id': sid, 'owner_id': u['id'], 'created_at': now_iso()}
+    await db.studios.insert_one(doc)
+    doc.pop('_id', None)
+    return doc
+
+@api.get("/studios")
+async def list_studios(city: Optional[str] = None, q: Optional[str] = None):
+    return await _list_entity(db.studios, city, q)
+
+@api.post("/lessons")
+async def create_lesson(inp: LessonIn, u=Depends(get_user)):
+    lid = str(uuid.uuid4())
+    doc = {**inp.dict(), 'id': lid, 'teacher_id': u['id'], 'created_at': now_iso()}
+    await db.lessons.insert_one(doc)
+    doc.pop('_id', None)
+    return doc
+
+@api.get("/lessons")
+async def list_lessons(city: Optional[str] = None, q: Optional[str] = None):
+    return await _list_entity(db.lessons, city, q)
+
+# ================== Community Feed / Posts ==================
+@api.post("/posts")
+async def create_post(inp: PostIn, u=Depends(get_user)):
+    pid = str(uuid.uuid4())
+    doc = {'id': pid, 'author_id': u['id'], 'author_name': u['full_name'],
+           'author_avatar': u.get('avatar_url'), 'text': inp.text,
+           'media_url': inp.media_url, 'media_type': inp.media_type,
+           'like_count': 0, 'comment_count': 0, 'created_at': now_iso()}
+    await db.posts.insert_one(doc)
+    doc.pop('_id', None)
+    return doc
+
+@api.get("/posts/feed")
+async def feed(limit: int = 50, u=Depends(get_user)):
+    posts = await db.posts.find({}, {'_id': 0}).sort('created_at', -1).limit(limit).to_list(limit)
+    liked_ids = set()
+    if posts:
+        pids = [p['id'] for p in posts]
+        likes = await db.likes.find({'user_id': u['id'], 'post_id': {'$in': pids}}, {'_id': 0}).to_list(len(pids))
+        liked_ids = {l['post_id'] for l in likes}
+    for p in posts:
+        p['liked'] = p['id'] in liked_ids
+    return posts
+
+@api.get("/posts/{pid}")
+async def get_post(pid: str, u=Depends(get_user)):
+    p = await db.posts.find_one({'id': pid}, {'_id': 0})
+    if not p: raise HTTPException(404, "Not found")
+    liked = await db.likes.find_one({'post_id': pid, 'user_id': u['id']}) is not None
+    p['liked'] = liked
+    comments = await db.comments.find({'post_id': pid}, {'_id': 0}).sort('created_at', 1).to_list(200)
+    return {'post': p, 'comments': comments}
+
+@api.post("/posts/{pid}/like")
+async def toggle_like(pid: str, u=Depends(get_user)):
+    p = await db.posts.find_one({'id': pid})
+    if not p: raise HTTPException(404, "Not found")
+    existing = await db.likes.find_one({'post_id': pid, 'user_id': u['id']})
+    if existing:
+        await db.likes.delete_one({'post_id': pid, 'user_id': u['id']})
+        await db.posts.update_one({'id': pid}, {'$inc': {'like_count': -1}})
+        return {'liked': False}
+    await db.likes.insert_one({'post_id': pid, 'user_id': u['id'], 'created_at': now_iso()})
+    await db.posts.update_one({'id': pid}, {'$inc': {'like_count': 1}})
+    return {'liked': True}
+
+@api.post("/posts/comment")
+async def add_comment(inp: CommentIn, u=Depends(get_user)):
+    if not inp.text.strip(): raise HTTPException(400, "Empty comment")
+    doc = {'id': str(uuid.uuid4()), 'post_id': inp.post_id, 'author_id': u['id'],
+           'author_name': u['full_name'], 'author_avatar': u.get('avatar_url'),
+           'text': inp.text.strip(), 'created_at': now_iso()}
+    await db.comments.insert_one(doc)
+    await db.posts.update_one({'id': inp.post_id}, {'$inc': {'comment_count': 1}})
+    doc.pop('_id', None)
+    return doc
+
+@api.post("/follow/{target_id}")
+async def toggle_follow(target_id: str, u=Depends(get_user)):
+    if target_id == u['id']:
+        raise HTTPException(400, "Cannot follow yourself")
+    existing = await db.follows.find_one({'follower_id': u['id'], 'target_user_id': target_id})
+    if existing:
+        await db.follows.delete_one({'follower_id': u['id'], 'target_user_id': target_id})
+        return {'following': False}
+    await db.follows.insert_one({'follower_id': u['id'], 'target_user_id': target_id,
+                                 'created_at': now_iso()})
+    return {'following': True}
+
+@api.get("/entities/mine")
+async def my_entities(u=Depends(get_user)):
+    return {
+        'gigs': await db.gigs.find({'organizer_id': u['id']}, {'_id': 0}).to_list(50),
+        'bands': await db.bands.find({'owner_id': u['id']}, {'_id': 0}).to_list(50),
+        'equipment': await db.equipment.find({'owner_id': u['id']}, {'_id': 0}).to_list(50),
+        'studios': await db.studios.find({'owner_id': u['id']}, {'_id': 0}).to_list(50),
+        'lessons': await db.lessons.find({'teacher_id': u['id']}, {'_id': 0}).to_list(50),
+        'posts': await db.posts.find({'author_id': u['id']}, {'_id': 0}).to_list(50),
+    }
 
 app.include_router(api)
 app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=["*"],

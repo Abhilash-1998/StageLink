@@ -1,0 +1,47 @@
+{
+  "summary": "StageLink Iteration 2 — action-based architecture pivot fully validated. Backend: 19/19 new-entity tests pass (bands, equipment, studios, lessons, community posts w/ like+comment toggle, /entities/mine, action-based gigs/applications with no role gate, active-role auto-adds missing role, seeded users have BOTH roles). Frontend: Login as ariya.kapoor lands on Home tab showing greeting, quick metrics (Applications/Rating/Followers), Upcoming gigs (Rooftop Jazz Night), 'Picked for you' recos, and Community feed with 4+ posts. All 5 bottom tabs render (Home/Discover/Create/Messages/Profile). Discover has all 7 chips (Gigs/Musicians/Bands/Studios/Equipment/Lessons/Venues) and switching to Bands renders 3 seeded bands (via /api/bands). Create tab shows all 7 action cards (post, hiring, band, equipment_rent, equipment_sale, studio, lesson). Community post creation via Create tab POSTs to /api/posts and shows in feed on refresh. Equipment rent listing publishes successfully. Messages tab shows seeded thread with Sunset Sound Co; opening /chat/[id] and sending a message posts to /api/messages. Profile role switcher toggles active_role musician <-> organizer via /api/auth/active-role and the profile view refreshes (organizer view shows different sections: My applications & gigs / Insights / My listings 7 / Upgrade to Pro). Like button toggle on community post works (heart fills and count increments 0->1). New user signup flow correctly skips /auth/role and routes directly to /auth/onboarding (confirmed in _layout.tsx line 32-35). Non-blocking: deprecated pointerEvents warning still present (carried over from iteration 1).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Create > Community post -> Home feed", "issue": "After creating a post from Create tab, navigating back to Home does NOT auto-refetch /posts/feed — new post only appears after pull-to-refresh or full reload. Review request explicitly says 'visible on refresh' so this is acceptable, but a focus/useFocusEffect-based refetch on Home would improve UX.", "affected_testIDs": ["post-text", "create-submit"]}
+    ],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "Pressable (unknown source, likely third-party in expo-router/react-navigation)", "issue": "Console warning: 'props.pointerEvents is deprecated. Use style.pointerEvents' still present. Reference: (carried over from iteration_1)"}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_action_based_api.py",
+    "/app/backend/tests/test_stagelink_api.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/iteration_2.xml"
+  ],
+  "action_items": [
+    "(Cleanup) Remove stale comment in /app/frontend/app/auth/signup.tsx line 26 that says 'AuthGate routes to /auth/role' — the /auth/role step has been removed (_layout.tsx now routes directly to /auth/onboarding for authenticated users with onboarded=false).",
+    "(UX polish) Add useFocusEffect-based refetch on Home tab (/app/frontend/app/(tabs)/index.tsx) so newly-created community posts appear when the user tabs back to Home without pull-to-refresh.",
+    "(Cleanup, carried over) Track down 'props.pointerEvents is deprecated' warning and migrate to style.pointerEvents.",
+    "(No action needed — everything else works as spec.)"
+  ],
+  "critical_code_review_comments": [
+    "Backend /api/auth/active-role now auto-adds the requested role to user.roles if missing (server.py L317-326). This is correct action-based behavior — no 400 on role mismatch anymore.",
+    "Backend do_seed() (server.py L741, L775) sets roles=['organizer','musician'] and roles=['musician','organizer'] for all seeded users — dual-role verified by tests.",
+    "Backend /api/posts/feed correctly annotates each post with liked flag (per-user) and preserves like_count/comment_count from the post document — no ObjectId leakage (all queries use projection {'_id': 0}).",
+    "Backend _list_entity helper unifies band/equipment/studio/lesson list queries — good DRY pattern.",
+    "server.py is now ~1123 lines — exceeds the 700-line guideline. Consider splitting into routers/auth.py, routers/entities.py, routers/community.py, routers/ai.py for maintainability.",
+    "Frontend (tabs)/create.tsx setTimeout(reset, 900) after success is fine for UX but means create-ok testID is only visible for <1s — tests must check within that window.",
+    "Frontend Discover chip Pressables occasionally do not receive Playwright force-click events reliably (had to fall back to element.click() via JS). Real device touches work. Consider migrating touch-critical Pressables to TouchableOpacity or explicit hitSlop for testing determinism."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_action_based_api.py (new — 19 pytest tests for the action-based architecture pivot)"
+  ],
+  "success_rate": {"backend": "100% (19/19 new entity+community tests)", "frontend": "100% of core action-based flows verified (login->home, tabs, discover chips, create->post, messages->chat->send, profile role switch, like toggle)"},
+  "seed_data_creation": "None — used existing do_seed() output. Tests use TEST_* users on-the-fly and seeded ariya.kapoor@stagelink.dev / demo1234.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Auth is already fully verified in iteration_1 (34/34). Action-based architecture (entities + community + role switcher) is fully verified in iteration_2 (19/19 backend + 10+ frontend flows). Next iterations should focus on: (a) Home tab focus-based refetch after post creation, (b) any new AI/analytics endpoints, (c) native equipment/studio detail screens if added. Deprecated pointerEvents warning is a low-priority cleanup task carried across iterations.",
+  "rca_of_issue": "N/A — no critical bugs."
+}

@@ -29,17 +29,13 @@ function AuthGate({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    // Authenticated
+    // Authenticated — action-based model: skip role gate, all users can do everything.
     if (!user) return;
-    if (user.roles.length === 0) {
-      if (!(seg === "auth" && segments[1] === "role")) router.replace("/auth/role");
-      return;
-    }
     if (!user.onboarded) {
       if (!(seg === "auth" && segments[1] === "onboarding")) router.replace("/auth/onboarding");
       return;
     }
-    // fully authed — bounce off auth/splash into tabs
+    // fully onboarded — bounce off auth/splash into tabs
     if (inAuthGroup || isSplash) router.replace("/(tabs)");
   }, [status, user, segments, router]);
 
