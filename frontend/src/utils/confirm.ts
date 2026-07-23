@@ -10,7 +10,6 @@ export function confirmDelete(
   message = "This action cannot be undone."
 ): Promise<boolean> {
   if (Platform.OS === "web") {
-    // eslint-disable-next-line no-alert
     return Promise.resolve(window.confirm(`${title}\n\n${message}`));
   }
   return new Promise((resolve) => {

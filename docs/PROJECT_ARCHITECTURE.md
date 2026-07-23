@@ -37,7 +37,7 @@ Permissions are derived from **ownership** of an entity, not from a user's "role
 | Database      | MongoDB via Motor (async)                           | `MONGO_URL` in `backend/.env` — do not modify |
 | Auth          | Custom JWT: 24h access + 30d refresh                | Brute-force protection, bcrypt hashes |
 | AI            | Emergent LLM Key → **Gemini 2.5 Flash** via `emergentintegrations` | Bio, pricing, contract, recommendations, profile review |
-| Payments      | Stripe (subscription screen scaffolded; checkout TBD) | Test keys available in pod env |
+| Payments      | **Hidden for v1** — no checkout UI; informational prices only | Stripe planned for v2 |
 | Media         | `expo-image-picker` + base64 storage in Mongo       | `MediaPickerSheet` / `MediaViewer` reusable |
 | Location      | `expo-location`                                     | Utility in `src/utils/location.ts` |
 | Haptics       | `expo-haptics`                                      | Applied on primary actions |
@@ -53,8 +53,10 @@ Permissions are derived from **ownership** of an entity, not from a user's "role
 ## 3. Repository Layout
 
 ```
-/app
+/app  (repo root — pushed as StageLink/)
 ├── README.md
+├── LICENSE                             ← MIT
+├── .gitignore
 ├── design_guidelines.json
 ├── docs/
 │   └── PROJECT_ARCHITECTURE.md         ← THIS FILE (source of truth)
@@ -66,12 +68,13 @@ Permissions are derived from **ownership** of an entity, not from a user's "role
 ├── test_result.md                      ← rolling test log
 │
 ├── backend/
-│   ├── .env                            ← MONGO_URL, EMERGENT_LLM_KEY, JWT_SECRET
+│   ├── .env.example                    ← template — copy to .env
 │   ├── requirements.txt
-│   └── server.py                       ← Entire FastAPI app (routers, models, seed)
+│   ├── server.py                       ← FastAPI app + all routes + seed()
+│   └── tests/                          ← pytest suite (iter 1–9)
 │
 └── frontend/
-    ├── .env                            ← EXPO_BACKEND_URL + packager vars
+    ├── .env.example
     ├── app.json
     ├── package.json
     ├── metro.config.js                 ← DO NOT MODIFY
@@ -80,40 +83,40 @@ Permissions are derived from **ownership** of an entity, not from a user's "role
     │   ├── _layout.tsx                 ← Root: AuthProvider + Stack + AuthGate
     │   ├── index.tsx                   ← Splash / redirect
     │   ├── +html.tsx                   ← Web html wrapper
-    │   ├── subscription.tsx            ← Stripe plans (scaffold)
+    │   ├── settings.tsx                ← Settings screen (own-profile only)
     │   ├── (tabs)/                     ← 5-tab bottom nav
-    │   │   ├── _layout.tsx             ← Tabs config
-    │   │   ├── index.tsx               ← Home
-    │   │   ├── discover.tsx            ← Discover (musicians/gigs/venues/gear)
-    │   │   ├── create.tsx              ← Universal create hub
-    │   │   ├── messages.tsx            ← Threads list
-    │   │   ├── profile.tsx             ← Profile hub
-    │   │   ├── applications.tsx        ← href:null — accessed from profile
-    │   │   └── dashboard.tsx           ← href:null — accessed from profile
-    │   ├── auth/
-    │   │   ├── login.tsx
-    │   │   ├── signup.tsx
-    │   │   ├── role.tsx                ← Role affordance selector (post-signup)
-    │   │   └── onboarding.tsx          ← City + optional bio
-    │   ├── profile/
-    │   │   └── edit.tsx                ← Living profile editor (PATCH)
-    │   ├── chat/[id].tsx               ← Message thread detail
-    │   └── gig/
-    │       ├── [id].tsx                ← Gig detail
-    │       └── new.tsx                 ← Create gig
+    │   │   ├── _layout.tsx
+    │   │   ├── index.tsx               ← Home + community feed
+    │   │   ├── discover.tsx
+    │   │   ├── create.tsx
+    │   │   ├── messages.tsx
+    │   │   ├── profile.tsx             ← own profile (thin wrapper)
+    │   │   ├── applications.tsx        (href:null)
+    │   │   └── dashboard.tsx           (href:null)
+    │   ├── auth/                       ← login, signup, onboarding, role
+    │   ├── profile/edit.tsx
+    │   ├── user/[id]/                  ← public profile + connections
+    │   │   ├── index.tsx               ← public profile (thin wrapper)
+    │   │   └── connections.tsx         ← Followers / Following list
+    │   ├── chat/[id].tsx
+    │   └── gig/[id].tsx, new.tsx
     │
-    └── src/                            ← Non-route code lives here
+    └── src/                            ← Non-route code
         ├── theme.ts                    ← Colors + `type` typography scale
+        ├── data/
+        │   └── options.ts              ← ALL static UI options (single source)
         ├── components/
-        │   ├── MediaPickerSheet.tsx    ← Reusable native bottom sheet
-        │   └── MediaViewer.tsx         ← Reusable full-screen media viewer
+        │   ├── ProfileView.tsx         ← the ONE unified profile component
+        │   ├── MediaPickerSheet.tsx
+        │   └── MediaViewer.tsx
         ├── context/
-        │   └── AuthContext.tsx         ← Auth state, token refresh, guards
+        │   └── AuthContext.tsx
         ├── hooks/
         │   └── use-icon-fonts.ts
         └── utils/
-            ├── location.ts
-            └── storage/                ← SecureStore wrappers
+            ├── date.ts                 ← DD/MM/YYYY formatter
+            ├── confirm.ts              ← cross-platform delete confirm
+            └── location.ts
 ```
 
 ### Folder Rules
@@ -196,7 +199,11 @@ Seed runs automatically on empty DB — see `seed()` in `server.py`.
 
 **Auth** — `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`, `GET /auth/me`, `POST /auth/roles`, `POST /auth/active-role`
 
-**Profile** — `POST|GET /profile/musician/{user_id}`, `POST|GET /profile/organizer/{user_id}`, `PATCH /profile`, `POST|DELETE /profile/portfolio[/{id}]`, `POST|DELETE /profile/services[/{id}]`, `GET /profile/completion`
+**Profile (unified)** — **`GET /profile/{userId}`** ⭐ returns everything the profile screen needs in a single call: `{user, profile, stats, entities, reviews, upcoming_events, achievements, community_activity, permissions, viewer_relationship}`. Works with or without auth; the `permissions` field is what makes the same UI switch between "own" and "public" affordances. Both `(tabs)/profile.tsx` and `user/[id]/index.tsx` render via `ProfileView` from this one payload.
+
+**Profile (editing)** — `POST|GET /profile/musician/{user_id}`, `POST|GET /profile/organizer/{user_id}`, `PATCH /profile`, `POST|DELETE /profile/portfolio[/{id}]`, `POST|DELETE /profile/services[/{id}]`, `GET /profile/completion`
+
+**User entities & connections** — `GET /users/{uid}/entities`, `GET /users/{uid}/followers`, `GET /users/{uid}/following`, `POST /follow/{target_id}`
 
 **Directory** — `GET /musicians`, `GET /organizers`, `GET /venues`, `GET /bands`, `GET /equipment`, `GET /studios`, `GET /lessons` (each supports `city`, `q`, category filters)
 
@@ -204,7 +211,9 @@ Seed runs automatically on empty DB — see `seed()` in `server.py`.
 
 **Entities (owned)** — `POST /bands|equipment|studios|lessons`, `GET /entities/mine`
 
-**Community** — `POST /posts`, `GET /posts/feed`, `GET /posts/{id}`, `POST /posts/{id}/like`, `POST /posts/comment`, `POST /follow/{id}`
+**Community** — `POST /posts` (accepts `visibility: public|followers|private`), `PATCH /posts/{pid}` (owner-only), `DELETE /posts/{pid}`, `GET /posts/feed`, `GET /posts/{id}`, `POST /posts/{id}/like`, `POST /posts/comment`, `DELETE /comments/{cid}`
+
+**Owned entity DELETEs** — `DELETE /gigs/{gid}` (organizer-only, cascades applications), `DELETE /bands/{bid}`, `DELETE /equipment/{eid}`, `DELETE /studios/{sid}`, `DELETE /lessons/{lid}`
 
 **Messaging** — `GET /threads`, `GET /threads/{other_id}`, `POST /messages`
 
@@ -269,17 +278,60 @@ import { type } from "@/src/theme";
 
 ---
 
-## 9. Free / Pro / Business (product tiers)
+## 9. Unified Profile Architecture
+
+**One component renders every profile.** Layout, spacing, sections, and typography are identical regardless of whether the viewer is the owner or someone else. Only action buttons and content affordances differ.
+
+### Component contract
+
+`src/components/ProfileView.tsx`
+```ts
+type Props = {
+  data: ProfilePayload;                    // full response from GET /profile/{id}
+  onDelete?: (path: string) => void;       // parent handles cache invalidation
+  onFollowToggle?: (state: boolean) => void;
+};
+```
+
+### Data flow
+
+1. Both `(tabs)/profile.tsx` (own) and `user/[id]/index.tsx` (public) are **thin wrappers** — they resolve the target user id and call `GET /api/profile/{userId}`.
+2. Backend returns `{user, profile, stats, entities, reviews, upcoming_events, achievements, community_activity, permissions, viewer_relationship}`.
+3. `ProfileView` renders **17 sections** in a fixed order — About · Portfolio · Experience · Genres · Skills · Services · Availability · Upcoming events · Posts · Reviews · Achievements · Equipment · Bands · Studios · Lessons · Community activity · Find on.
+4. Every section is **always rendered** — with an empty state (`"No X yet."`) when there's no data. Never hidden.
+5. Action buttons and delete controls are driven purely by `data.permissions`:
+   - `can_edit` → Edit Profile button
+   - `can_open_settings` → Settings button
+   - `can_switch_role` → Switch role action
+   - `can_create_post` → Create post action
+   - `can_view_analytics` → Analytics action
+   - `can_delete_content` → per-item delete icons
+   - `can_follow` → Follow / Following button
+   - `can_message` → Message button
+   - `can_hire` → Hire/Invite action (visible only to organizers)
+   - `can_share` → Share action (always visible)
+   - `can_report` → Report action
+
+### Anti-patterns (banned)
+
+- ❌ Two profile screens
+- ❌ Duplicating a section for own vs public
+- ❌ Branching layout on an `isOwn` prop
+- ❌ Hiding sections when empty
+
+---
+
+## 10. Free / Pro / Business (product tiers)
 
 - **Free** — everything works: profile, feed, gig apply, hire, listings, messaging, basic calendar
 - **Pro** — verified badge, priority ranking, HD uploads, unlimited portfolio, AI unlimited, calendar sync, priority inbox
 - **Business** — teams, verification, multi-location, staff mgmt, revenue analytics
 
-Wired: `/subscription` screen. Not wired: Stripe checkout, entitlements middleware.
+Payment UI is intentionally hidden for v1. Informational prices (gig budget, rental / studio / lesson rates, service prices, base performance rate) remain visible as marketplace information. Stripe checkout is deferred to v2.
 
 ---
 
-## 10. Testing Workflow
+## 11. Testing Workflow
 
 - **Testing agent** (`testing_agent` tool) after every feature or bugfix of medium+ size
 - Reports in `/app/test_reports/iteration_{n}.json` — **read and act on every bug, even LOW priority**
@@ -293,10 +345,15 @@ Wired: `/subscription` screen. Not wired: Stripe checkout, entitlements middlewa
 | 1         | Auth (register/login/refresh/guards)  | 34/34 pass   |
 | 2         | Action-based pivot                    | 19/19 backend + all frontend flows pass |
 | 3         | Native profile + media                | Pass         |
+| 5         | Discover chip crash + community CRUD  | 22/22 backend |
+| 6         | Followers/Following + hardcoded cleanup | 24/24 backend |
+| 7         | Unified ProfileView (mode-based)      | All FE flows pass |
+| 8         | Post visibility hygiene               | 7/7 backend |
+| 9         | Unified `GET /profile/{id}` endpoint  | 10/10 backend + full FE parity |
 
 ---
 
-## 11. Coding Conventions
+## 12. Coding Conventions
 
 - **React Native only** — no `div`/`span`, no CSS files, no `className`, no `onClick`
 - All text wrapped in `<Text>`; all touchables via `TouchableOpacity` / `Pressable`
@@ -316,7 +373,7 @@ Wired: `/subscription` screen. Not wired: Stripe checkout, entitlements middlewa
 
 ---
 
-## 12. Integrations
+## 13. Integrations
 
 All third-party integrations go through **`integration_playbook_expert_v2`** — never DIY.
 
@@ -329,7 +386,7 @@ All third-party integrations go through **`integration_playbook_expert_v2`** —
 
 ---
 
-## 13. Refactoring Backlog
+## 14. Refactoring Backlog
 
 - `backend/server.py` is ~1290 lines. When it exceeds ~1500, split into:
   ```
@@ -345,29 +402,39 @@ All third-party integrations go through **`integration_playbook_expert_v2`** —
 
 ---
 
-## 14. Roadmap Snapshot
+## 15. Roadmap Snapshot
 
-**In progress** — Typography rollout (finish `auth/role.tsx`), full-app sweep for hardcoded fonts.
+**Completed (v1)**
+- ✅ Unified `ProfileView` component + `GET /profile/{id}` endpoint
+- ✅ Community CRUD (posts + comments) with visibility control
+- ✅ Followers / Following connections screen
+- ✅ Full typography scale rollout (no hardcoded `fontSize`)
+- ✅ DD/MM/YYYY dates everywhere
+- ✅ Discover crash regression fix
+- ✅ All hardcoded UI data centralized in `src/data/options.ts`
+- ✅ Payment UI removed from v1 (Stripe deferred)
 
-**Next up**
-1. Stripe subscription checkout + entitlement checks
-2. Push notifications (Emergent-managed) — requires deploy + build
-3. Google/Outlook Calendar sync for availability
+**Next up (v2)**
+1. Stripe subscription checkout + entitlement middleware
+2. Push notifications (Emergent-managed — requires deploy + `google-services.json`)
+3. Google / Outlook Calendar sync for availability
 
 **Backlog**
+- Reviews composer + response workflow
+- Notifications inbox screen
+- Save / bookmark posts
 - Business Plan dashboards (staff, venue analytics)
 - Ticketing, Insurance, Equipment Financing UI
-- Video trimming/editing for portfolio uploads
+- Video trimming / editing for portfolio uploads
 - Search relevance tuning + saved searches
-- Reviews & ratings v2 (dispute, response)
 
 ---
 
-## 15. Update Protocol
+## 16. Update Protocol
 
 **This doc drifts if we let it.** Rules:
 
 1. Any structural change (new folder, new tab, new collection, new integration) → update the relevant section **in the same change**.
-2. Any completed roadmap item → move from §14 to a "Completed" line in that section (or delete once stale).
-3. Any new convention/rule → add to §11 or §8.
+2. Any completed roadmap item → move from §15 to the "Completed" line in that section.
+3. Any new convention/rule → add to §12 (Coding Conventions) or §8 (Design System).
 4. `memory/PRD.md` stays short (product intent). Architectural detail belongs **here**.

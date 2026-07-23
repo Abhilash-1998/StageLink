@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { View, Text, StyleSheet, Modal, FlatList, Image, Dimensions, Pressable, StatusBar, Platform } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { theme, type } from "@/src/theme";
+import { type } from "@/src/theme";
 
 const { width, height } = Dimensions.get("window");
 
