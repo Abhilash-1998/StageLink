@@ -4,40 +4,34 @@ import { useLocalSearchParams, router } from "expo-router";
 import { useAuth } from "@/src/context/AuthContext";
 import { theme, type } from "@/src/theme";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { ProfileView } from "@/src/components/ProfileView";
+import { ProfileView, ProfilePayload } from "@/src/components/ProfileView";
 
 /**
- * Public professional profile viewer — thin container that reuses the same
- * ProfileView component as (tabs)/profile. Loads posts + listings via the
- * public /users/{uid}/entities endpoint so the layout is identical to own.
+ * Public professional profile viewer — identical wrapper to (tabs)/profile.
+ * Both call the unified GET /api/profile/{userId} endpoint; the response's
+ * `permissions` field is what makes the buttons differ.
  */
 export default function UserProfile() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { user, fetchApi } = useAuth();
-  const [data, setData] = useState<any>(null);
-  const [entities, setEntities] = useState<any>(null);
+  const [data, setData] = useState<ProfilePayload | null>(null);
   const [loading, setLoading] = useState(true);
-  const [following, setFollowing] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
     if (id === user?.id) { router.replace("/(tabs)/profile"); return; }
     try {
-      const [d, ent]: [any, any] = await Promise.all([
-        fetchApi(`/profile/musician/${id}`),
-        fetchApi(`/users/${id}/entities`).catch(() => null),
-      ]);
-      setData(d); setEntities(ent);
-    } catch { setData(null); setEntities(null); }
+      const d: ProfilePayload = await fetchApi(`/profile/${id}`);
+      setData(d);
+    } catch { setData(null); }
     finally { setLoading(false); }
   }, [fetchApi, id, user?.id]);
 
   useEffect(() => { load(); }, [load]);
 
-  const toggleFollow = async () => {
-    setFollowing(!following);
-    try { await fetchApi(`/follow/${id}`, { method: "POST" }); }
-    catch { setFollowing(following); }
+  const onFollowToggle = async () => {
+    try { await fetchApi(`/follow/${id}`, { method: "POST" }); } catch {}
+    await load();
   };
 
   if (loading) return (
@@ -56,16 +50,7 @@ export default function UserProfile() {
     </SafeAreaView>
   );
 
-  return (
-    <ProfileView
-      mode="public"
-      targetUser={data.user}
-      profile={data}
-      entities={entities}
-      following={following}
-      onFollow={toggleFollow}
-    />
-  );
+  return <ProfileView data={data} onFollowToggle={onFollowToggle} />;
 }
 
 const styles = StyleSheet.create({

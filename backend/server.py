@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, status
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -543,6 +543,158 @@ async def get_organizer(user_id: str):
     u = await db.users.find_one({'id': user_id}, {'_id': 0, 'password_hash': 0})
     gigs_count = await db.gigs.count_documents({'organizer_id': user_id})
     return {'user': user_public(u) if u else None, 'profile': o, 'gigs_count': gigs_count}
+
+async def _optional_user(request: Request):
+    """Return the authed user if a valid Bearer token is present, else None.
+    Used by public endpoints that still want to know the viewer for permissions."""
+    try:
+        auth = request.headers.get('authorization', '')
+        if not auth.startswith('Bearer '): return None
+        token = auth.split(' ', 1)[1]
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
+        if payload.get('type') != 'access': return None
+        u = await db.users.find_one({'id': payload['sub']}, {'_id': 0})
+        return u
+    except Exception:
+        return None
+
+@api.get("/profile/{user_id}")
+async def get_unified_profile(user_id: str, request: Request):
+    """Single unified profile payload. Returns the same shape whether the viewer
+    is the owner, another logged-in user, or anonymous.
+
+    Response includes: user, profile, stats, entities (with posts filtered by
+    visibility for non-owners), reviews (with reviewer info), upcoming_events,
+    achievements (derived), community_activity, permissions, viewer_relationship.
+    The frontend renders identical layout and picks actions based on
+    `permissions`; it should never branch on "own vs public"."""
+    m = await db.musicians.find_one({'user_id': user_id}, {'_id': 0})
+    if not m: raise HTTPException(404, "Profile not found")
+    u = await db.users.find_one({'id': user_id}, {'_id': 0, 'password_hash': 0})
+    if not u: raise HTTPException(404, "User not found")
+    viewer = await _optional_user(request)
+    is_self = bool(viewer and viewer['id'] == user_id)
+
+    # Stats
+    reviews_raw = await db.reviews.find({'target_user_id': user_id}, {'_id': 0}).sort('created_at', -1).to_list(50)
+    rating = round(sum(r['rating'] for r in reviews_raw) / len(reviews_raw), 1) if reviews_raw else 0.0
+    reliability = min(100, 60 + len(reviews_raw) * 4)
+    followers = await db.follows.count_documents({'target_user_id': user_id})
+    following = await db.follows.count_documents({'follower_id': user_id})
+    now_str = now_iso()
+    completed_gigs = await db.applications.count_documents({
+        'musician_id': user_id, 'status': 'accepted'
+    })
+    completed_gigs += await db.gigs.count_documents({
+        'organizer_id': user_id, 'date': {'$lt': now_str[:10]}
+    })
+
+    # Entities (posts filtered by visibility unless owner)
+    post_filter = {'author_id': user_id}
+    if not is_self:
+        post_filter = {'author_id': user_id, '$or': [
+            {'visibility': 'public'}, {'visibility': {'$exists': False}}
+        ]}
+    entities = {
+        'posts': await db.posts.find(post_filter, {'_id': 0}).sort('created_at', -1).to_list(50),
+        'gigs': await db.gigs.find({'organizer_id': user_id}, {'_id': 0}).sort('date', -1).to_list(50),
+        'bands': await db.bands.find({'owner_id': user_id}, {'_id': 0}).to_list(50),
+        'equipment': await db.equipment.find({'owner_id': user_id}, {'_id': 0}).to_list(50),
+        'studios': await db.studios.find({'owner_id': user_id}, {'_id': 0}).to_list(50),
+        'lessons': await db.lessons.find({'teacher_id': user_id}, {'_id': 0}).to_list(50),
+    }
+
+    # Reviews with reviewer info (already-embedded fields used if present)
+    reviews = []
+    for r in reviews_raw[:10]:
+        rev = dict(r)
+        # If missing author name/avatar, fetch from users
+        if not rev.get('author_name') and rev.get('author_id'):
+            au = await db.users.find_one({'id': rev['author_id']}, {'_id': 0, 'full_name': 1, 'avatar_url': 1})
+            if au:
+                rev['author_name'] = au.get('full_name')
+                rev['author_avatar'] = au.get('avatar_url')
+        reviews.append(rev)
+
+    # Upcoming events: for organizers, future own gigs; for musicians, gigs where
+    # they have an accepted application in the future.
+    today = now_str[:10]
+    org_upcoming = await db.gigs.find({
+        'organizer_id': user_id, 'date': {'$gte': today}
+    }, {'_id': 0}).sort('date', 1).limit(5).to_list(5)
+    mus_apps = await db.applications.find({
+        'musician_id': user_id, 'status': 'accepted'
+    }, {'_id': 0}).to_list(50)
+    mus_gig_ids = [a['gig_id'] for a in mus_apps]
+    mus_upcoming = await db.gigs.find({
+        'id': {'$in': mus_gig_ids}, 'date': {'$gte': today}
+    }, {'_id': 0}).sort('date', 1).limit(5).to_list(5) if mus_gig_ids else []
+    upcoming_events = sorted(org_upcoming + mus_upcoming, key=lambda g: g.get('date', ''))[:6]
+
+    # Achievements (derived)
+    achievements = []
+    if u.get('verified'): achievements.append({'key': 'verified', 'label': 'Verified artist', 'icon': 'checkmark-circle'})
+    if rating >= 4.5 and len(reviews_raw) >= 5:
+        achievements.append({'key': 'top_rated', 'label': 'Top rated', 'icon': 'star'})
+    if completed_gigs >= 10:
+        achievements.append({'key': 'ten_gigs', 'label': f'{completed_gigs} gigs completed', 'icon': 'ribbon'})
+    if followers >= 50:
+        achievements.append({'key': 'popular', 'label': f'{followers}+ followers', 'icon': 'people'})
+    if m.get('experience_years', 0) >= 5:
+        achievements.append({'key': 'veteran', 'label': f'{m["experience_years"]}+ yrs experience', 'icon': 'trophy'})
+
+    # Community activity — lightweight counts for the section
+    likes_given = await db.likes.count_documents({'user_id': user_id})
+    comments_given = await db.comments.count_documents({'author_id': user_id})
+    community_activity = {
+        'posts_count': len(entities['posts']),
+        'likes_given': likes_given,
+        'comments_given': comments_given,
+    }
+
+    # Permissions — the frontend renders identical layout and only branches action buttons on this.
+    is_organizer = bool(viewer and 'organizer' in (viewer.get('roles') or []))
+    is_following = False
+    if viewer and not is_self:
+        is_following = bool(await db.follows.find_one({
+            'follower_id': viewer['id'], 'target_user_id': user_id
+        }))
+    permissions = {
+        'can_edit': is_self,
+        'can_open_settings': is_self,
+        'can_switch_role': is_self and len(u.get('roles') or []) > 1,
+        'can_create_post': is_self,
+        'can_view_analytics': is_self,
+        'can_delete_content': is_self,
+        'can_follow': (not is_self) and bool(viewer),
+        'can_message': (not is_self) and bool(viewer),
+        'can_hire': (not is_self) and is_organizer,
+        'can_share': True,
+        'can_report': (not is_self) and bool(viewer),
+    }
+    viewer_relationship = {
+        'is_self': is_self,
+        'is_following': is_following,
+        'viewer_id': viewer['id'] if viewer else None,
+    }
+
+    return {
+        'user': user_public(u),
+        'profile': m,
+        'stats': {
+            'followers': followers, 'following': following,
+            'completed_gigs': completed_gigs,
+            'reviews_count': len(reviews_raw), 'rating': rating,
+            'reliability': reliability,
+        },
+        'entities': entities,
+        'reviews': reviews,
+        'upcoming_events': upcoming_events,
+        'achievements': achievements,
+        'community_activity': community_activity,
+        'permissions': permissions,
+        'viewer_relationship': viewer_relationship,
+    }
 
 # ================== Directory / Discover ==================
 @api.get("/musicians")
