@@ -5,42 +5,42 @@ import { router } from "expo-router";
 import { useAuth } from "@/src/context/AuthContext";
 import { theme, type } from "@/src/theme";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { GENRES, INSTRUMENTS as INSTRS, EVENT_TYPES as TYPES, GIG_COVERS as COVERS } from "@/src/data/options";
-import { parseDDMMYYYY } from "@/src/utils/date";
+import { GENRES, INSTRUMENTS as INSTRS, EVENT_TYPES as TYPES, DEFAULT_CITY } from "@/src/data/options";
+import { DatePickerField } from "@/src/components/DatePickerField";
 
 export default function NewGig() {
   const { fetchApi } = useAuth();
   const [title, setTitle] = useState("");
-  const [city, setCity] = useState("");
-  const [date, setDate] = useState("");
+  const city = DEFAULT_CITY;
+  const [date, setDate] = useState<string | null>(null); // YYYY-MM-DD
   const [type, setType] = useState("club");
   const [genre, setGenre] = useState("Jazz");
   const [instr, setInstr] = useState("Vocals");
   const [budget, setBudget] = useState("");
   const [desc, setDesc] = useState("");
-  const [cover, setCover] = useState(COVERS[0]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   const submit = async () => {
     setErr(null);
-    if (!title.trim() || !city.trim() || !date.trim() || !budget.trim() || !desc.trim()) {
+    if (!title.trim() || !city.trim() || !date || !budget.trim() || !desc.trim()) {
       setErr("Please fill all required fields"); return;
     }
-    const iso = parseDDMMYYYY(date.trim());
-    if (!iso) { setErr("Date must be DD/MM/YYYY (e.g. 15/06/2026)"); return; }
     setLoading(true);
     try {
       const g: any = await fetchApi("/gigs", {
         method: "POST", body: JSON.stringify({
-          title, city, date: iso, event_type: type, genre, instrument_needed: instr,
-          budget: parseInt(budget), description: desc, cover_url: cover,
+          title, city, date, event_type: type, genre, instrument_needed: instr,
+          budget: parseInt(budget), description: desc,
         }),
       });
       router.replace(`/gig/${g.id}`);
     } catch (e: any) { setErr(e.message); }
     finally { setLoading(false); }
   };
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
 
   return (
     <SafeAreaView style={styles.bg}>
@@ -54,9 +54,17 @@ export default function NewGig() {
           <Text style={styles.label}>Title</Text>
           <TextInput testID="new-title" style={styles.input} value={title} onChangeText={setTitle} placeholder="Rooftop Jazz Night" placeholderTextColor={theme.textDim} />
           <Text style={styles.label}>City</Text>
-          <TextInput testID="new-city" style={styles.input} value={city} onChangeText={setCity} placeholder="Mumbai" placeholderTextColor={theme.textDim} />
-          <Text style={styles.label}>Date (DD/MM/YYYY)</Text>
-          <TextInput testID="new-date" style={styles.input} value={date} onChangeText={setDate} placeholder="15/06/2026" placeholderTextColor={theme.textDim} />
+          <View style={[styles.input, { justifyContent: "center" }]}>
+            <Text style={{ ...type.bodySm, color: theme.text }}>{city}</Text>
+          </View>
+          <Text style={styles.label}>Date</Text>
+          <DatePickerField
+            testID="new-date"
+            value={date}
+            onChange={setDate}
+            placeholder="Pick gig date"
+            minimumDate={today}
+          />
           <Text style={styles.label}>Event type</Text>
           <View style={styles.chipRow}>{TYPES.map(t => (
             <Pressable key={t} testID={`type-${t}`} onPress={() => setType(t)} style={[styles.chip, type === t && styles.chipOn]}><Text style={[styles.chipTxt, type === t && styles.chipTxtOn]}>{t}</Text></Pressable>
@@ -73,17 +81,6 @@ export default function NewGig() {
           <TextInput testID="new-budget" style={styles.input} value={budget} onChangeText={setBudget} keyboardType="number-pad" placeholder="15000" placeholderTextColor={theme.textDim} />
           <Text style={styles.label}>Description</Text>
           <TextInput testID="new-desc" style={[styles.input, { height: 100, textAlignVertical: "top" }]} value={desc} onChangeText={setDesc} multiline placeholder="What's the vibe?" placeholderTextColor={theme.textDim} />
-
-          <Text style={styles.label}>Cover image</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-            {COVERS.map(c => (
-              <Pressable key={c} onPress={() => setCover(c)}>
-                <View style={[styles.coverThumb, cover === c && { borderColor: theme.brand }]}>
-                  <View style={{ backgroundColor: "#333", flex: 1, borderRadius: 10 }} />
-                </View>
-              </Pressable>
-            ))}
-          </ScrollView>
 
           {err && <Text style={styles.err}>{err}</Text>}
           <Pressable testID="new-submit" onPress={submit} disabled={loading} style={styles.cta}>
@@ -106,7 +103,6 @@ const styles = StyleSheet.create({
   chipOn: { backgroundColor: theme.brandTint, borderColor: theme.brand },
   chipTxt: { ...type.caption, color: theme.textDim, fontWeight: "500", textTransform: "capitalize" },
   chipTxtOn: { ...type.caption, color: theme.text, fontWeight: "700", textTransform: "capitalize" },
-  coverThumb: { width: 90, height: 60, borderRadius: 12, borderWidth: 2, borderColor: theme.border, padding: 2 },
   err: { ...type.caption, color: theme.error, marginTop: 12 },
   cta: { backgroundColor: theme.brand, borderRadius: theme.radius.pill, paddingVertical: 16, alignItems: "center", marginTop: 24 },
   ctaTxt: { ...type.titleMd, color: "#fff", fontWeight: "700" },

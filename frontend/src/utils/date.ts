@@ -1,4 +1,4 @@
-// Single source of truth for date formatting across StageLink.
+// Single source of truth for date formatting across gigZee.
 // Rule: display dates as DD/MM/YYYY everywhere.
 
 const pad = (n: number) => String(n).padStart(2, "0");

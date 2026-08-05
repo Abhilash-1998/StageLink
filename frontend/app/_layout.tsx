@@ -8,6 +8,12 @@ import { StatusBar } from "expo-status-bar";
 
 import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 import { AuthProvider, useAuth } from "@/src/context/AuthContext";
+import { NetworkProvider, useNetwork } from "@/src/context/NetworkContext";
+import { HealthProvider, useHealth } from "@/src/context/HealthContext";
+import { NoInternetScreen } from "@/src/components/NoInternetScreen";
+import { MaintenanceScreen } from "@/src/components/MaintenanceScreen";
+import { PushNotificationBootstrap } from "@/src/notifications/PushNotificationBootstrap";
+import { StartupPermissionsGate } from "@/src/permissions/StartupPermissionsGate";
 import { theme } from "@/src/theme";
 
 LogBox.ignoreAllLogs(true);
@@ -49,6 +55,19 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+function NetworkGate({ children }: { children: React.ReactNode }) {
+  const { isOnline } = useNetwork();
+  if (!isOnline) return <NoInternetScreen />;
+  return <>{children}</>;
+}
+
+function HealthGate({ children }: { children: React.ReactNode }) {
+  const { healthy } = useHealth();
+  // Don't block first paint — only show maintenance when server explicitly says so.
+  if (healthy === false) return <MaintenanceScreen />;
+  return <>{children}</>;
+}
+
 export default function RootLayout() {
   const [loaded, error] = useIconFonts();
 
@@ -61,18 +80,30 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: theme.bg }}>
       <SafeAreaProvider>
-        <AuthProvider>
-          <StatusBar style="light" />
-          <AuthGate>
-            <Stack
-              screenOptions={{
-                headerShown: false,
-                contentStyle: { backgroundColor: theme.bg },
-                animation: "fade",
-              }}
-            />
-          </AuthGate>
-        </AuthProvider>
+        <NetworkProvider>
+          <NetworkGate>
+            <AuthProvider>
+              <HealthProvider>
+                <HealthGate>
+                  <StartupPermissionsGate>
+                    <PushNotificationBootstrap>
+                      <StatusBar style="light" />
+                      <AuthGate>
+                        <Stack
+                          screenOptions={{
+                            headerShown: false,
+                            contentStyle: { backgroundColor: theme.bg },
+                            animation: "fade",
+                          }}
+                        />
+                      </AuthGate>
+                    </PushNotificationBootstrap>
+                  </StartupPermissionsGate>
+                </HealthGate>
+              </HealthProvider>
+            </AuthProvider>
+          </NetworkGate>
+        </NetworkProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

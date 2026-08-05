@@ -27,10 +27,8 @@ export async function getCurrentPosition() {
 }
 
 export async function reverseGeocodeCity(lat: number, lng: number): Promise<string | null> {
-  try {
-    const res = await Location.reverseGeocodeAsync({ latitude: lat, longitude: lng });
-    return res[0]?.city || res[0]?.subregion || res[0]?.region || null;
-  } catch { return null; }
+  // Launch market is Hyderabad-only; ignore device geocode for city selection.
+  return "Hyderabad";
 }
 
 export function openAppSettings() { Linking.openSettings(); }

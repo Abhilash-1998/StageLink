@@ -7,7 +7,11 @@ import { useAuth } from "@/src/context/AuthContext";
 import { theme, type } from "@/src/theme";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { MediaPickerSheet, PickedMedia } from "@/src/components/MediaPickerSheet";
-import { EQUIPMENT_CATEGORIES, LESSON_SUBJECTS, DEFAULT_COVERS } from "@/src/data/options";
+import { EQUIPMENT_CATEGORIES, LESSON_SUBJECTS, DEFAULT_CITY } from "@/src/data/options";
+import { DEFAULT_COVERS } from "@/src/utils/covers";
+
+const EQUIPMENT_MAX_IMAGES = 3;
+const STUDIO_MAX_IMAGES = 3;
 
 type Action =
   | "post" | "hiring" | "band" | "equipment_rent" | "equipment_sale"
@@ -33,24 +37,41 @@ export default function Create() {
   // Shared form state
   const [text, setText] = useState("");
   const [title, setTitle] = useState("");
-  const [city, setCity] = useState("");
+  const [city] = useState(DEFAULT_CITY);
   const [price, setPrice] = useState("");
   const [category, setCategory] = useState("Guitar");
   const [desc, setDesc] = useState("");
+  const [mapsUrl, setMapsUrl] = useState("");
   const [mediaUri, setMediaUri] = useState<string | null>(null);
   const [mediaType, setMediaType] = useState<"image" | "video" | null>(null);
+  const [eqImages, setEqImages] = useState<string[]>([]);
   const [showPicker, setShowPicker] = useState(false);
+
+  const isMultiPhoto = action === "equipment_rent" || action === "equipment_sale" || action === "studio";
+  const listingMax = action === "studio" ? STUDIO_MAX_IMAGES : EQUIPMENT_MAX_IMAGES;
+  const photoSlotsLeft = Math.max(0, listingMax - eqImages.length);
 
   const onPickedMedia = (items: PickedMedia[]) => {
     if (!items.length) return;
+    if (isMultiPhoto) {
+      const photos = items.filter((i) => i.type === "image").map((i) => i.uri);
+      if (!photos.length) return;
+      setEqImages((prev) => [...prev, ...photos].slice(0, listingMax));
+      Haptics.selectionAsync().catch(() => {});
+      return;
+    }
     setMediaUri(items[0].uri);
     setMediaType(items[0].type);
     Haptics.selectionAsync().catch(() => {});
   };
 
+  const removeEqImage = (idx: number) => {
+    setEqImages((prev) => prev.filter((_, i) => i !== idx));
+  };
+
   const reset = () => {
-    setText(""); setTitle(""); setCity(""); setPrice(""); setCategory("Guitar"); setDesc("");
-    setMediaUri(null); setMediaType(null);
+    setText(""); setTitle(""); setPrice(""); setCategory("Guitar"); setDesc(""); setMapsUrl("");
+    setMediaUri(null); setMediaType(null); setEqImages([]);
     setErr(null); setOk(null);
   };
 
@@ -59,15 +80,13 @@ export default function Create() {
     try {
       setSaving(true);
       if (action === "post") {
-        if (!text.trim() && !mediaUri) throw new Error("Say something or add media");
+        if (!text.trim()) throw new Error("Write something for your post");
+        if (!mediaUri || mediaType !== "image") throw new Error("Add at least one photo");
         await fetchApi("/posts", { method: "POST", body: JSON.stringify({
-          text, media_url: mediaUri || undefined, media_type: mediaType || undefined,
+          text, media_url: mediaUri, media_type: "image",
         })});
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
         setOk("Posted to community");
-      } else if (action === "hiring") {
-        router.push("/gig/new");
-        setAction(null); return;
       } else if (action === "band") {
         if (!title.trim() || !city.trim()) throw new Error("Name and city required");
         await fetchApi("/bands", { method: "POST", body: JSON.stringify({
@@ -77,17 +96,28 @@ export default function Create() {
         setOk("Band created");
       } else if (action === "equipment_rent" || action === "equipment_sale") {
         if (!title.trim() || !city.trim() || !price.trim()) throw new Error("Fill all fields");
+        if (eqImages.length < 1) throw new Error("Add at least one photo");
+        const images = eqImages.slice(0, EQUIPMENT_MAX_IMAGES);
         await fetchApi("/equipment", { method: "POST", body: JSON.stringify({
           title, listing_type: action === "equipment_rent" ? "rent" : "sale",
           category, city, price: parseInt(price), description: desc,
-          cover_url: DEFAULT_COVERS.equipment,
+          images,
+          cover_url: images[0],
         })});
         setOk("Listing published");
       } else if (action === "studio") {
         if (!title.trim() || !city.trim() || !price.trim()) throw new Error("Fill all fields");
+        if (eqImages.length < 1) throw new Error("Add at least one photo");
+        const images = eqImages.slice(0, STUDIO_MAX_IMAGES);
+        const link = mapsUrl.trim();
+        if (link && !/^https?:\/\//i.test(link)) {
+          throw new Error("Maps link must start with http:// or https://");
+        }
         await fetchApi("/studios", { method: "POST", body: JSON.stringify({
           name: title, city, hourly_rate: parseInt(price), description: desc,
-          cover_url: DEFAULT_COVERS.studio,
+          maps_url: link || undefined,
+          images,
+          cover_url: images[0],
         })});
         setOk("Studio added");
       } else if (action === "lesson") {
@@ -113,8 +143,18 @@ export default function Create() {
         </View>
         <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 130, gap: 10 }}>
           {ACTIONS.map(a => (
-            <Pressable key={a.key} testID={`action-${a.key}`} onPress={() => setAction(a.key)}
-                       style={({ pressed }) => [styles.actionCard, pressed && { transform: [{ scale: 0.99 }] }]}>
+            <Pressable
+              key={a.key}
+              testID={`action-${a.key}`}
+              onPress={() => {
+                if (a.key === "hiring") {
+                  router.push("/gig/new");
+                  return;
+                }
+                setAction(a.key);
+              }}
+              style={({ pressed }) => [styles.actionCard, pressed && { transform: [{ scale: 0.99 }] }]}
+            >
               <View style={styles.actionIcon}><Ionicons name={a.icon} size={20} color={theme.brand} /></View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.actionTitle}>{a.label}</Text>
@@ -150,7 +190,6 @@ export default function Create() {
               {mediaUri && (
                 <View style={styles.mediaPreview}>
                   <Image source={{ uri: mediaUri }} style={styles.mediaImg} />
-                  {mediaType === "video" && <View style={styles.mediaPlay}><Ionicons name="play" size={22} color="#fff" /></View>}
                   <Pressable testID="clear-post-media" onPress={() => { setMediaUri(null); setMediaType(null); }} style={styles.mediaX}>
                     <Ionicons name="close" size={18} color="#fff" />
                   </Pressable>
@@ -158,8 +197,9 @@ export default function Create() {
               )}
               <Pressable testID="post-add-media" onPress={() => setShowPicker(true)} style={styles.addMediaBtn}>
                 <Ionicons name="images" size={18} color={theme.brand} />
-                <Text style={styles.addMediaTxt}>{mediaUri ? "Change media" : "Add photo or video"}</Text>
+                <Text style={styles.addMediaTxt}>{mediaUri ? "Change photo" : "Add photo (required)"}</Text>
               </Pressable>
+              <Text style={styles.hint}>At least one photo is required.</Text>
             </>
           )}
           {action === "band" && (
@@ -167,7 +207,9 @@ export default function Create() {
               <Text style={styles.label}>Band name</Text>
               <TextInput testID="band-name" style={styles.input} value={title} onChangeText={setTitle} placeholder="Midnight Kolaba" placeholderTextColor={theme.textDim} />
               <Text style={styles.label}>Home city</Text>
-              <TextInput testID="band-city" style={styles.input} value={city} onChangeText={setCity} placeholder="Mumbai" placeholderTextColor={theme.textDim} />
+              <View style={[styles.input, { justifyContent: "center" }]}>
+                <Text style={{ ...type.bodySm, color: theme.text }}>{city}</Text>
+              </View>
               <Text style={styles.label}>Description</Text>
               <TextInput testID="band-desc" style={[styles.input, { height: 100, textAlignVertical: "top", paddingTop: 12 }]}
                          value={desc} onChangeText={setDesc} multiline placeholder="What's your sound?" placeholderTextColor={theme.textDim} />
@@ -175,6 +217,27 @@ export default function Create() {
           )}
           {(action === "equipment_rent" || action === "equipment_sale") && (
             <>
+              <Text style={styles.label}>Photos ({eqImages.length}/{EQUIPMENT_MAX_IMAGES})</Text>
+              <Text style={styles.hint}>Required — add at least 1 photo (up to {EQUIPMENT_MAX_IMAGES}).</Text>
+              <View style={styles.eqGrid}>
+                {eqImages.map((uri, idx) => (
+                  <View key={`${idx}-${uri.slice(0, 24)}`} style={styles.eqThumbWrap}>
+                    <Image source={{ uri }} style={styles.eqThumb} />
+                    {idx === 0 && (
+                      <View style={styles.eqCoverBadge}><Text style={styles.eqCoverTxt}>Cover</Text></View>
+                    )}
+                    <Pressable testID={`eq-img-remove-${idx}`} onPress={() => removeEqImage(idx)} style={styles.eqThumbX}>
+                      <Ionicons name="close" size={14} color="#fff" />
+                    </Pressable>
+                  </View>
+                ))}
+                {photoSlotsLeft > 0 && (
+                  <Pressable testID="eq-add-photos" onPress={() => setShowPicker(true)} style={styles.eqAddTile}>
+                    <Ionicons name="camera" size={22} color={theme.brand} />
+                    <Text style={styles.eqAddTxt}>Add</Text>
+                  </Pressable>
+                )}
+              </View>
               <Text style={styles.label}>Title</Text>
               <TextInput testID="eq-title" style={styles.input} value={title} onChangeText={setTitle} placeholder="Fender Stratocaster (2019)" placeholderTextColor={theme.textDim} />
               <Text style={styles.label}>Category</Text>
@@ -186,7 +249,7 @@ export default function Create() {
                 ))}
               </ScrollView>
               <Text style={styles.label}>City</Text>
-              <TextInput testID="eq-city" style={styles.input} value={city} onChangeText={setCity} placeholder="Mumbai" placeholderTextColor={theme.textDim} />
+              <TextInput testID="eq-city" style={styles.input} value={city} editable={false} placeholderTextColor={theme.textDim} />
               <Text style={styles.label}>Price (INR) {action === "equipment_rent" ? "/ day" : ""}</Text>
               <TextInput testID="eq-price" style={styles.input} value={price} onChangeText={setPrice} keyboardType="number-pad" placeholder="5000" placeholderTextColor={theme.textDim} />
               <Text style={styles.label}>Description</Text>
@@ -196,10 +259,46 @@ export default function Create() {
           )}
           {action === "studio" && (
             <>
+              <Text style={styles.label}>Photos ({eqImages.length}/{STUDIO_MAX_IMAGES})</Text>
+              <Text style={styles.hint}>Required — add at least 1 photo (up to {STUDIO_MAX_IMAGES}).</Text>
+              <View style={styles.eqGrid}>
+                {eqImages.map((uri, idx) => (
+                  <View key={`studio-${idx}-${uri.slice(0, 24)}`} style={styles.eqThumbWrap}>
+                    <Image source={{ uri }} style={styles.eqThumb} />
+                    {idx === 0 && (
+                      <View style={styles.eqCoverBadge}><Text style={styles.eqCoverTxt}>Cover</Text></View>
+                    )}
+                    <Pressable testID={`studio-img-remove-${idx}`} onPress={() => removeEqImage(idx)} style={styles.eqThumbX}>
+                      <Ionicons name="close" size={14} color="#fff" />
+                    </Pressable>
+                  </View>
+                ))}
+                {photoSlotsLeft > 0 && (
+                  <Pressable testID="studio-add-photos" onPress={() => setShowPicker(true)} style={styles.eqAddTile}>
+                    <Ionicons name="camera" size={22} color={theme.brand} />
+                    <Text style={styles.eqAddTxt}>Add</Text>
+                  </Pressable>
+                )}
+              </View>
               <Text style={styles.label}>Studio name</Text>
               <TextInput testID="studio-name" style={styles.input} value={title} onChangeText={setTitle} placeholder="Loft Studios" placeholderTextColor={theme.textDim} />
               <Text style={styles.label}>City</Text>
-              <TextInput testID="studio-city" style={styles.input} value={city} onChangeText={setCity} placeholder="Mumbai" placeholderTextColor={theme.textDim} />
+              <View style={[styles.input, { justifyContent: "center" }]}>
+                <Text style={{ ...type.bodySm, color: theme.text }}>{city}</Text>
+              </View>
+              <Text style={styles.label}>Maps link</Text>
+              <TextInput
+                testID="studio-maps"
+                style={styles.input}
+                value={mapsUrl}
+                onChangeText={setMapsUrl}
+                placeholder="https://maps.google.com/… or maps.app.goo.gl/…"
+                placeholderTextColor={theme.textDim}
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="url"
+              />
+              <Text style={styles.hint}>Paste a Google Maps or Apple Maps share link so people can navigate to your studio.</Text>
               <Text style={styles.label}>Hourly rate (INR)</Text>
               <TextInput testID="studio-price" style={styles.input} value={price} onChangeText={setPrice} keyboardType="number-pad" placeholder="1500" placeholderTextColor={theme.textDim} />
               <Text style={styles.label}>Description</Text>
@@ -220,7 +319,7 @@ export default function Create() {
                 ))}
               </ScrollView>
               <Text style={styles.label}>City</Text>
-              <TextInput testID="lesson-city" style={styles.input} value={city} onChangeText={setCity} placeholder="Mumbai" placeholderTextColor={theme.textDim} />
+              <TextInput testID="lesson-city" style={styles.input} value={city} editable={false} placeholderTextColor={theme.textDim} />
               <Text style={styles.label}>Price / hour (INR)</Text>
               <TextInput testID="lesson-price" style={styles.input} value={price} onChangeText={setPrice} keyboardType="number-pad" placeholder="900" placeholderTextColor={theme.textDim} />
               <Text style={styles.label}>Description</Text>
@@ -242,8 +341,10 @@ export default function Create() {
         visible={showPicker}
         onClose={() => setShowPicker(false)}
         onPicked={onPickedMedia}
-        allowVideo={action === "post"}
-        allowsMultiple={false}
+        allowVideo={false}
+        allowImage
+        allowsMultiple={isMultiPhoto}
+        selectionLimit={isMultiPhoto ? Math.max(1, photoSlotsLeft) : 1}
       />
     </SafeAreaView>
   );
@@ -262,6 +363,7 @@ const styles = StyleSheet.create({
   actionDesc: { ...type.caption, color: theme.textDim, marginTop: 3 },
   label: { ...type.label, color: theme.textMid, marginTop: 14, marginBottom: 6 },
   input: { ...type.bodySm, backgroundColor: theme.bg2, borderColor: theme.border, borderWidth: 1, borderRadius: theme.radius.md, paddingHorizontal: 14, paddingVertical: 12, color: theme.text },
+  hint: { ...type.caption, color: theme.textDim, marginTop: 6 },
   pillRow: { flexDirection: "row", gap: 8, paddingVertical: 4 },
   pill: { flexShrink: 0, paddingHorizontal: 12, paddingVertical: 7, borderRadius: theme.radius.pill, backgroundColor: theme.bg2, borderWidth: 1, borderColor: theme.border },
   pillOn: { backgroundColor: theme.brandTint, borderColor: theme.brand },
@@ -277,4 +379,15 @@ const styles = StyleSheet.create({
   mediaPlay: { position: "absolute", top: "45%", left: "45%", width: 48, height: 48, borderRadius: 24, backgroundColor: "rgba(0,0,0,0.5)", alignItems: "center", justifyContent: "center" },
   addMediaBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 12, paddingVertical: 12, borderRadius: theme.radius.pill, borderWidth: 1, borderColor: theme.brand, backgroundColor: theme.brandTint },
   addMediaTxt: { ...type.caption, color: theme.brand, fontWeight: "700" },
+  eqGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginTop: 8 },
+  eqThumbWrap: { width: 96, height: 96, borderRadius: theme.radius.md, overflow: "hidden", position: "relative", backgroundColor: theme.bg3 },
+  eqThumb: { width: "100%", height: "100%" },
+  eqThumbX: { position: "absolute", top: 6, right: 6, width: 24, height: 24, borderRadius: 12, backgroundColor: "rgba(0,0,0,0.65)", alignItems: "center", justifyContent: "center" },
+  eqCoverBadge: { position: "absolute", left: 6, bottom: 6, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, backgroundColor: "rgba(0,0,0,0.65)" },
+  eqCoverTxt: { ...type.tiny, color: "#fff", fontWeight: "700" },
+  eqAddTile: {
+    width: 96, height: 96, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.brand,
+    borderStyle: "dashed", backgroundColor: theme.brandTint, alignItems: "center", justifyContent: "center", gap: 4,
+  },
+  eqAddTxt: { ...type.tiny, color: theme.brand, fontWeight: "700" },
 });

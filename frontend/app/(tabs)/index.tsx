@@ -1,6 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, RefreshControl, ActivityIndicator, Image, ImageBackground, TextInput, Modal, KeyboardAvoidingView, Platform, Share, Alert } from "react-native";
-import { LinearGradient } from "expo-linear-gradient";
+import { View, Text, StyleSheet, ScrollView, Pressable, RefreshControl, ActivityIndicator, Image, TextInput, Modal, KeyboardAvoidingView, Platform, Alert } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { router, useFocusEffect } from "expo-router";
 import { useAuth } from "@/src/context/AuthContext";
@@ -8,6 +7,7 @@ import { theme, type } from "@/src/theme";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { formatDate, formatRelative } from "@/src/utils/date";
 import { confirmDelete } from "@/src/utils/confirm";
+import { EntityCover } from "@/src/components/EntityCover";
 
 type Post = {
   id: string; author_id: string; author_name: string; author_avatar?: string | null;
@@ -22,19 +22,49 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [homeData, setHomeData] = useState<any>(null);
+  const [notifUnread, setNotifUnread] = useState(0);
 
-  const load = useCallback(async () => {
-    const [rc, feed, home] = await Promise.all([
-      fetchApi<any[]>("/ai/recommendations", { method: "POST", body: JSON.stringify({}) }).catch(() => []),
-      fetchApi<Post[]>("/posts/feed").catch(() => []),
-      fetchApi<any>("/home").catch(() => null),
-    ]);
-    setRecs(rc); setPosts(feed); setHomeData(home);
+  const load = useCallback(async (opts?: { includeAi?: boolean }) => {
+    const includeAi = opts?.includeAi !== false;
+    const feedP = fetchApi<Post[]>("/posts/feed").catch(() => [] as Post[]);
+    const homeP = fetchApi<any>("/home").catch(() => null);
+    const unreadP = fetchApi<{ unread: number }>("/notifications/unread-count").catch(() => ({ unread: 0 }));
+
+    // Feed + home first so the screen paints quickly; AI can lag.
+    const [feed, home, unread] = await Promise.all([feedP, homeP, unreadP]);
+    setPosts(feed);
+    setHomeData(home);
+    setNotifUnread(unread?.unread || 0);
+    if (home?.recommendations?.length) setRecs(home.recommendations);
+
+    if (includeAi) {
+      fetchApi<any[]>("/ai/recommendations", { method: "POST", body: JSON.stringify({}) })
+        .then((rc) => { if (rc?.length) setRecs(rc); })
+        .catch(() => {});
+    }
   }, [fetchApi]);
 
-  useEffect(() => { load().finally(() => setLoading(false)); }, [load]);
-  useFocusEffect(useCallback(() => { load(); }, [load]));
-  const onRefresh = async () => { setRefreshing(true); try { await load(); } finally { setRefreshing(false); } };
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        await load({ includeAi: true });
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [load]);
+
+  useFocusEffect(useCallback(() => {
+    // Refresh quietly when returning to the tab — skip AI to keep it snappy.
+    load({ includeAi: false });
+  }, [load]));
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    try { await load({ includeAi: true }); } finally { setRefreshing(false); }
+  };
 
   const toggleLike = async (pid: string) => {
     setPosts(prev => prev.map(p => p.id === pid ? { ...p, liked: !p.liked, like_count: p.like_count + (p.liked ? -1 : 1) } : p));
@@ -106,15 +136,6 @@ export default function Home() {
     try { await fetchApi(`/comments/${cid}`, { method: "DELETE" }); } catch {}
   };
 
-  const sharePost = async (p: Post) => {
-    try {
-      await Share.share({
-        title: `StageLink · ${p.author_name}`,
-        message: `${p.author_name} on StageLink: "${p.text}"`,
-      });
-    } catch {}
-  };
-
   const reportPost = (p: Post) => {
     if (Platform.OS === "web") {
       window.alert("Reported. Thanks — our team will review this post.");
@@ -141,28 +162,41 @@ export default function Home() {
             <Text style={styles.hi}>Welcome back</Text>
             <Text style={styles.name}>{user?.full_name?.split(" ")[0]}</Text>
           </View>
-          <Pressable testID="home-avatar" onPress={() => router.push("/(tabs)/profile")} style={styles.avatar}>
-            {user?.avatar_url ? <Image source={{ uri: user.avatar_url }} style={{ width: "100%", height: "100%" }} /> :
-              <Text style={styles.avatarTxt}>{initials}</Text>}
-          </Pressable>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+            <Pressable testID="home-notifications" onPress={() => router.push("/notifications")} style={styles.bellBtn}>
+              <Ionicons name="notifications-outline" size={20} color={theme.text} />
+              {notifUnread > 0 && (
+                <View style={styles.badge}>
+                  <Text style={styles.badgeTxt}>{notifUnread > 99 ? "99+" : notifUnread}</Text>
+                </View>
+              )}
+            </Pressable>
+            <Pressable testID="home-avatar" onPress={() => router.push("/(tabs)/profile")} style={styles.avatar}>
+              {user?.avatar_url ? <Image source={{ uri: user.avatar_url }} style={{ width: "100%", height: "100%" }} /> :
+                <Text style={styles.avatarTxt}>{initials}</Text>}
+            </Pressable>
+          </View>
         </View>
 
-        {/* Quick actions */}
+        {/* Quick stats — compact */}
         <View style={styles.quickRow}>
-          <Pressable testID="qa-apps" onPress={() => router.push("/(tabs)/applications")} style={styles.qCard}>
-            <Ionicons name="briefcase" size={16} color={theme.brand} />
-            <Text style={styles.qLbl}>Applications</Text>
-            <Text style={styles.qVal}>{metrics.applications ?? 0}</Text>
-          </Pressable>
-          <Pressable testID="qa-rating" onPress={() => router.push("/(tabs)/profile")} style={styles.qCard}>
-            <Ionicons name="star" size={16} color={theme.brand} />
-            <Text style={styles.qLbl}>Rating</Text>
-            <Text style={styles.qVal}>{metrics.rating ?? "0.0"}</Text>
-          </Pressable>
-          <Pressable testID="qa-followers" onPress={() => router.push("/(tabs)/profile")} style={styles.qCard}>
-            <Ionicons name="people" size={16} color={theme.brand} />
-            <Text style={styles.qLbl}>Followers</Text>
-            <Text style={styles.qVal}>{metrics.followers ?? 0}</Text>
+          <View testID="qa-apps" style={styles.qCard}>
+            <Ionicons name="briefcase" size={14} color={theme.brand} />
+            <View style={styles.qText}>
+              <Text style={styles.qVal}>{metrics.applications ?? 0}</Text>
+              <Text style={styles.qLbl}>Applications</Text>
+            </View>
+          </View>
+          <Pressable
+            testID="qa-followers"
+            onPress={() => user?.id && router.push(`/user/${user.id}/connections?tab=followers`)}
+            style={styles.qCard}
+          >
+            <Ionicons name="people" size={14} color={theme.brand} />
+            <View style={styles.qText}>
+              <Text style={styles.qVal}>{metrics.followers ?? 0}</Text>
+              <Text style={styles.qLbl}>Followers</Text>
+            </View>
           </Pressable>
         </View>
 
@@ -176,8 +210,12 @@ export default function Home() {
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20, gap: 12 }}>
               {upcoming.map((g: any) => (
                 <Pressable key={g.id} testID={`up-${g.id}`} onPress={() => router.push(`/gig/${g.id}`)} style={styles.upCard}>
-                  <ImageBackground source={{ uri: g.cover_url }} style={StyleSheet.absoluteFill} imageStyle={{ borderRadius: theme.radius.md }} />
-                  <LinearGradient colors={["transparent", "rgba(9,9,11,0.95)"]} style={[StyleSheet.absoluteFill, { borderRadius: theme.radius.md }]} />
+                  <EntityCover
+                    kind="gig"
+                    uri={g.cover_url}
+                    style={StyleSheet.absoluteFill}
+                    imageStyle={{ borderRadius: theme.radius.md }}
+                  />
                   <View style={styles.upInner}>
                     <Text style={styles.upDate}>{formatDate(g.date)}</Text>
                     <Text style={styles.upTitle} numberOfLines={1}>{g.title}</Text>
@@ -192,18 +230,22 @@ export default function Home() {
         {recs.length > 0 && (
           <View style={{ marginTop: 22 }}>
             <View style={styles.sectionRow}>
-              <Ionicons name="sparkles" size={14} color={theme.brand} />
+              <Ionicons name="star" size={14} color={theme.brand} />
               <Text style={styles.sectionTitle}>Picked for you</Text>
               <Pressable onPress={() => router.push("/(tabs)/discover")}><Text style={styles.link}>See all</Text></Pressable>
             </View>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20, gap: 12 }}>
               {recs.map((r: any) => (
                 <Pressable key={r.id} testID={`reco-${r.id}`} onPress={() => router.push(`/gig/${r.id}`)} style={styles.recoCard}>
-                  <ImageBackground source={{ uri: r.cover_url }} style={StyleSheet.absoluteFill} imageStyle={{ borderRadius: theme.radius.md }} />
-                  <LinearGradient colors={["transparent", "rgba(9,9,11,0.95)"]} style={[StyleSheet.absoluteFill, { borderRadius: theme.radius.md }]} />
+                  <EntityCover
+                    kind="gig"
+                    uri={r.cover_url}
+                    style={StyleSheet.absoluteFill}
+                    imageStyle={{ borderRadius: theme.radius.md }}
+                  />
                   <View style={styles.recoInner}>
                     <Text style={styles.recoTitle} numberOfLines={2}>{r.title}</Text>
-                    <Text style={styles.recoMeta}>{r.city} · ₹{r.budget.toLocaleString("en-IN")}</Text>
+                    <Text style={styles.recoMeta}>{r.city} · ₹{Number(r.budget || 0).toLocaleString("en-IN")}</Text>
                   </View>
                 </Pressable>
               ))}
@@ -216,9 +258,9 @@ export default function Home() {
           <View style={styles.sectionRow}>
             <Ionicons name="flame" size={14} color={theme.brand} />
             <Text style={styles.sectionTitle}>Community</Text>
-            <Pressable testID="new-post-btn" onPress={() => router.push("/(tabs)/create")}><Text style={styles.link}>Share</Text></Pressable>
+            <Pressable testID="new-post-btn" onPress={() => router.push("/(tabs)/create")}><Text style={styles.link}>Post</Text></Pressable>
           </View>
-          {posts.length === 0 && <Text style={styles.empty}>No posts yet — be the first to share.</Text>}
+          {posts.length === 0 && <Text style={styles.empty}>No posts yet — be the first to post.</Text>}
           {posts.map(p => (
             <View key={p.id} style={styles.postCard} testID={`post-${p.id}`}>
               <View style={styles.postHead}>
@@ -253,9 +295,6 @@ export default function Home() {
                 <Pressable testID={`comment-${p.id}`} onPress={() => openComments(p)} style={styles.postAction}>
                   <Ionicons name="chatbubble-outline" size={17} color={theme.textDim} />
                   <Text style={styles.postActionTxt}>{p.comment_count}</Text>
-                </Pressable>
-                <Pressable testID={`share-${p.id}`} onPress={() => sharePost(p)} style={styles.postAction}>
-                  <Ionicons name="share-outline" size={19} color={theme.textDim} />
                 </Pressable>
                 {p.author_id !== user?.id && (
                   <Pressable testID={`report-${p.id}`} onPress={() => reportPost(p)} style={[styles.postAction, { marginLeft: "auto" }]}>
@@ -358,12 +397,27 @@ const styles = StyleSheet.create({
   header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingHorizontal: 20, paddingTop: 8, paddingBottom: 8 },
   hi: { ...type.caption, color: theme.textDim },
   name: { ...type.h1, color: theme.text, marginTop: 2 },
+  bellBtn: {
+    width: 40, height: 40, borderRadius: 20, backgroundColor: theme.bg2,
+    borderWidth: 1, borderColor: theme.border, alignItems: "center", justifyContent: "center",
+  },
+  badge: {
+    position: "absolute", top: -2, right: -2, minWidth: 16, height: 16, borderRadius: 8,
+    backgroundColor: theme.brand, alignItems: "center", justifyContent: "center", paddingHorizontal: 3,
+  },
+  badgeTxt: { color: "#fff", fontWeight: "800", fontSize: 9 },
   avatar: { width: 42, height: 42, borderRadius: 21, backgroundColor: theme.bg2, borderWidth: 1, borderColor: theme.border, alignItems: "center", justifyContent: "center", overflow: "hidden" },
   avatarTxt: { ...type.bodySm, color: theme.text, fontWeight: "700" },
-  quickRow: { flexDirection: "row", paddingHorizontal: 16, gap: 10, marginTop: 8 },
-  qCard: { flex: 1, backgroundColor: theme.bg2, borderRadius: theme.radius.md, padding: 14, borderWidth: 1, borderColor: theme.border },
-  qLbl: { ...type.tiny, color: theme.textDim, marginTop: 8 },
-  qVal: { ...type.stat, color: theme.text, marginTop: 2 },
+  quickRow: { flexDirection: "row", paddingHorizontal: 20, gap: 8, marginTop: 4 },
+  qCard: {
+    flex: 1, flexDirection: "row", alignItems: "center", gap: 10,
+    backgroundColor: theme.bg2, borderRadius: theme.radius.md,
+    paddingVertical: 10, paddingHorizontal: 12,
+    borderWidth: 1, borderColor: theme.border,
+  },
+  qText: { flex: 1, minWidth: 0 },
+  qLbl: { ...type.tiny, color: theme.textDim, marginTop: 1 },
+  qVal: { fontSize: 16, fontWeight: "800", color: theme.text, letterSpacing: -0.2, lineHeight: 20 },
   sectionRow: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 20, marginBottom: 12 },
   sectionTitle: { ...type.titleMd, color: theme.text, fontWeight: "700", flex: 1 },
   link: { ...type.caption, color: theme.brand, fontWeight: "600" },

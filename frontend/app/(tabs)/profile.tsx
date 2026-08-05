@@ -20,6 +20,18 @@ export default function ProfileTab() {
     if (!user?.id) return;
     try {
       const d: ProfilePayload = await fetchApi(`/profile/${user.id}`);
+      // If unified profile has no portfolio yet, fall back to musician profile
+      // (handles older API / duplicate-row edge cases).
+      const existing = d?.profile?.portfolio_items;
+      if (!Array.isArray(existing) || existing.length === 0) {
+        try {
+          const m: any = await fetchApi(`/profile/musician/${user.id}`);
+          const items = m?.profile?.portfolio_items;
+          if (Array.isArray(items) && items.length > 0) {
+            d.profile = { ...(d.profile || {}), portfolio_items: items };
+          }
+        } catch { /* keep unified payload */ }
+      }
       setData(d);
     } catch { setData(null); }
     finally { setLoading(false); }

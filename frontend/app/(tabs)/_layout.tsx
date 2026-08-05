@@ -2,20 +2,28 @@ import { Tabs } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
 import { StyleSheet, Platform, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { theme, type } from "@/src/theme";
 
+const TAB_BAR_TOP_PADDING = 8;
+const TAB_BAR_CONTENT_HEIGHT = 58;
+const FAB_LIFT = 16;
+
 export default function TabsLayout() {
+  const insets = useSafeAreaInsets();
+
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
         tabBarStyle: {
-          position: "absolute",
+          position: "relative",
           backgroundColor: Platform.OS === "web" ? "rgba(9,9,11,0.96)" : "transparent",
           borderTopColor: theme.border,
           borderTopWidth: 1,
-          height: 78,
-          paddingTop: 8,
+          height: TAB_BAR_CONTENT_HEIGHT + TAB_BAR_TOP_PADDING + insets.bottom,
+          paddingTop: TAB_BAR_TOP_PADDING,
+          paddingBottom: insets.bottom,
         },
         tabBarBackground: () => Platform.OS !== "web" ? (
           <BlurView tint="dark" intensity={80} style={StyleSheet.absoluteFill} />
@@ -36,10 +44,11 @@ export default function TabsLayout() {
       <Tabs.Screen name="create" options={{
         title: "Create",
         tabBarIcon: ({ color, focused }) => (
-          <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: theme.brand, alignItems: "center", justifyContent: "center", marginBottom: 0 }}>
-            <Ionicons name="add" size={26} color="#fff" />
+          <View style={[styles.createBtn, { transform: [{ translateY: -FAB_LIFT }] }]}>
+            <Ionicons name="add" size={30} color="#fff" />
           </View>
         ),
+        tabBarLabelStyle: { ...type.tiny, fontWeight: "600", marginTop: 4, marginBottom: 2 },
       }} />
       <Tabs.Screen name="messages" options={{
         title: "Messages",
@@ -55,3 +64,19 @@ export default function TabsLayout() {
     </Tabs>
   );
 }
+
+const styles = StyleSheet.create({
+  createBtn: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    backgroundColor: theme.brand,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: theme.brand,
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
+  },
+});

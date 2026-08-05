@@ -30,21 +30,25 @@ async function ensureCameraPermission(): Promise<boolean> {
   return req.granted;
 }
 
-// Compress to <= 1024px, jpeg quality 0.7, return data URI.
-async function compressToDataUri(uri: string): Promise<string> {
+// Compress to <= maxWidth, jpeg quality, return durable data URI.
+async function compressToDataUri(
+  uri: string,
+  opts?: { maxWidth?: number; quality?: number },
+): Promise<string> {
   if (Platform.OS === "web") {
     return uri; // web picker already returns a data URI or blob URL
   }
-  try {
-    const r = await ImageManipulator.manipulateAsync(
-      uri, [{ resize: { width: 1024 } }],
-      { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG, base64: true }
-    );
-    if (r.base64) return `data:image/jpeg;base64,${r.base64}`;
-    return r.uri;
-  } catch {
-    return uri;
+  const maxWidth = opts?.maxWidth ?? 1024;
+  const quality = opts?.quality ?? 0.7;
+  const r = await ImageManipulator.manipulateAsync(
+    uri,
+    [{ resize: { width: maxWidth } }],
+    { compress: quality, format: ImageManipulator.SaveFormat.JPEG, base64: true },
+  );
+  if (!r.base64) {
+    throw new Error("Could not process image. Please try another photo.");
   }
+  return `data:image/jpeg;base64,${r.base64}`;
 }
 
 type Props = {
@@ -53,19 +57,38 @@ type Props = {
   onPicked: (items: PickedMedia[]) => void;
   allowsMultiple?: boolean;
   allowVideo?: boolean;
+  allowImage?: boolean;
+  /** Cap library multi-select (default 8). */
+  selectionLimit?: number;
   aspect?: [number, number];
   allowEditing?: boolean;
+  /** Smaller = lighter portfolio payloads (Android-friendly). */
+  imageMaxWidth?: number;
+  imageQuality?: number;
 };
 
-export function MediaPickerSheet({ visible, onClose, onPicked, allowsMultiple, allowVideo, aspect, allowEditing }: Props) {
+export function MediaPickerSheet({
+  visible,
+  onClose,
+  onPicked,
+  allowsMultiple,
+  allowVideo,
+  allowImage = true,
+  selectionLimit,
+  aspect,
+  allowEditing,
+  imageMaxWidth,
+  imageQuality,
+}: Props) {
   const [busy, setBusy] = useState<string | null>(null);
   const [permError, setPermError] = useState<string | null>(null);
+  const limit = Math.max(1, selectionLimit ?? (allowsMultiple ? 8 : 1));
 
   const handlePick = async (source: "camera" | "library", forceVideo = false) => {
     setPermError(null);
-    const mediaTypes = forceVideo
+    const mediaTypes = forceVideo || (allowVideo && !allowImage)
       ? ImagePicker.MediaTypeOptions.Videos
-      : allowVideo
+      : allowVideo && allowImage
         ? ImagePicker.MediaTypeOptions.All
         : ImagePicker.MediaTypeOptions.Images;
 
@@ -82,7 +105,7 @@ export function MediaPickerSheet({ visible, onClose, onPicked, allowsMultiple, a
       const opts: ImagePicker.ImagePickerOptions = {
         mediaTypes, quality: 0.85, allowsEditing: !!allowEditing,
         allowsMultipleSelection: source === "library" && !!allowsMultiple,
-        selectionLimit: allowsMultiple ? 8 : 1,
+        selectionLimit: allowsMultiple ? limit : 1,
       };
       if (aspect) opts.aspect = aspect;
       const result = source === "camera"
@@ -94,9 +117,13 @@ export function MediaPickerSheet({ visible, onClose, onPicked, allowsMultiple, a
       for (const a of result.assets) {
         const isVideo = a.type === "video" || (a.uri?.toLowerCase().includes(".mp4"));
         if (isVideo) {
-          out.push({ uri: a.uri, type: "video", width: a.width, height: a.height });
+          // Local video URIs are not durable — refuse until cloud upload exists.
+          throw new Error("Portfolio videos need cloud upload (coming soon). Please add photos for now.");
         } else {
-          const dataUri = await compressToDataUri(a.uri);
+          const dataUri = await compressToDataUri(a.uri, {
+            maxWidth: imageMaxWidth,
+            quality: imageQuality,
+          });
           out.push({ uri: dataUri, type: "image", width: a.width, height: a.height });
         }
       }
@@ -127,17 +154,19 @@ export function MediaPickerSheet({ visible, onClose, onPicked, allowsMultiple, a
             </View>
           )}
 
-          <Pressable testID="pick-camera" onPress={() => handlePick("camera")} disabled={!!busy} style={styles.row}>
-            <View style={styles.iconWrap}><Ionicons name="camera" size={22} color={theme.brand} /></View>
-            <View style={{ flex: 1 }}><Text style={styles.rowTitle}>Take a photo</Text><Text style={styles.rowSub}>Use your camera</Text></View>
-            {busy === "camera" ? <ActivityIndicator color={theme.brand} /> : <Ionicons name="chevron-forward" size={18} color={theme.textDim} />}
-          </Pressable>
+          {allowImage && (
+            <Pressable testID="pick-camera" onPress={() => handlePick("camera")} disabled={!!busy} style={styles.row}>
+              <View style={styles.iconWrap}><Ionicons name="camera" size={22} color={theme.brand} /></View>
+              <View style={{ flex: 1 }}><Text style={styles.rowTitle}>Take a photo</Text><Text style={styles.rowSub}>Use your camera</Text></View>
+              {busy === "camera" ? <ActivityIndicator color={theme.brand} /> : <Ionicons name="chevron-forward" size={18} color={theme.textDim} />}
+            </Pressable>
+          )}
 
           {allowVideo && (
             <Pressable testID="pick-camera-video" onPress={() => handlePick("camera", true)} disabled={!!busy} style={styles.row}>
               <View style={styles.iconWrap}><Ionicons name="videocam" size={22} color={theme.brand} /></View>
               <View style={{ flex: 1 }}><Text style={styles.rowTitle}>Record a video</Text><Text style={styles.rowSub}>Capture with your camera</Text></View>
-              {busy === "camera-video" ? <ActivityIndicator color={theme.brand} /> : <Ionicons name="chevron-forward" size={18} color={theme.textDim} />}
+              {busy === "camera" ? <ActivityIndicator color={theme.brand} /> : <Ionicons name="chevron-forward" size={18} color={theme.textDim} />}
             </Pressable>
           )}
 
@@ -145,7 +174,10 @@ export function MediaPickerSheet({ visible, onClose, onPicked, allowsMultiple, a
             <View style={styles.iconWrap}><Ionicons name="images" size={22} color={theme.brand} /></View>
             <View style={{ flex: 1 }}>
               <Text style={styles.rowTitle}>Choose from library</Text>
-              <Text style={styles.rowSub}>{allowsMultiple ? "Pick up to 8" : "Pick one"}{allowVideo ? " · photos or videos" : ""}</Text>
+              <Text style={styles.rowSub}>
+                {allowsMultiple ? `Pick up to ${limit}` : "Pick one"}
+                {allowImage && allowVideo ? " · photos or videos" : allowVideo ? " · video" : " · photos"}
+              </Text>
             </View>
             {busy === "library" ? <ActivityIndicator color={theme.brand} /> : <Ionicons name="chevron-forward" size={18} color={theme.textDim} />}
           </Pressable>

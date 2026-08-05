@@ -36,11 +36,48 @@ export default function Signup() {
           <Text style={styles.sub}>Join the live music marketplace</Text>
 
           <Text style={styles.label}>Full name</Text>
-          <TextInput testID="signup-name-input" style={styles.input} value={name} onChangeText={setName} placeholder="Alex Rivera" placeholderTextColor={theme.textDim} />
+          <TextInput
+            testID="signup-name-input"
+            style={styles.input}
+            value={name}
+            onChangeText={setName}
+            placeholder="Alex Rivera"
+            placeholderTextColor={theme.textDim}
+            autoCapitalize="words"
+            textContentType="name"
+            autoComplete="name"
+          />
           <Text style={styles.label}>Email</Text>
-          <TextInput testID="signup-email-input" style={styles.input} value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" placeholder="you@studio.com" placeholderTextColor={theme.textDim} />
+          <TextInput
+            testID="signup-email-input"
+            style={styles.input}
+            value={email}
+            onChangeText={setEmail}
+            autoCapitalize="none"
+            keyboardType="email-address"
+            placeholder="you@studio.com"
+            placeholderTextColor={theme.textDim}
+            textContentType="emailAddress"
+            autoComplete="email"
+            importantForAutofill="yes"
+          />
           <Text style={styles.label}>Password</Text>
-          <TextInput testID="signup-password-input" style={styles.input} value={password} onChangeText={setPassword} secureTextEntry placeholder="8+ chars, letters and numbers" placeholderTextColor={theme.textDim} />
+          <TextInput
+            testID="signup-password-input"
+            style={styles.input}
+            value={password}
+            onChangeText={setPassword}
+            secureTextEntry
+            placeholder="8+ chars, letters and numbers"
+            placeholderTextColor={theme.textDim}
+            // Disable iOS Strong Password overlay (yellow "Automatic Strong Password" cover).
+            textContentType="oneTimeCode"
+            autoComplete="off"
+            importantForAutofill="no"
+            autoCorrect={false}
+            spellCheck={false}
+            passwordRules=""
+          />
           {err && <Text style={styles.err} testID="signup-error">{err}</Text>}
 
           <Pressable testID="signup-submit-button" onPress={submit} disabled={loading} style={({ pressed }) => [styles.cta, pressed && { opacity: 0.8 }]}>

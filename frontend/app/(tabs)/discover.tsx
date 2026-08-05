@@ -1,13 +1,15 @@
 import { useEffect, useState, useCallback } from "react";
-import { View, Text, StyleSheet, ScrollView, TextInput, Pressable, ActivityIndicator, ImageBackground, FlatList, Image } from "react-native";
-import { LinearGradient } from "expo-linear-gradient";
+import { View, Text, StyleSheet, ScrollView, TextInput, Pressable, ActivityIndicator, FlatList, Image, Linking } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useAuth } from "@/src/context/AuthContext";
 import { theme, type } from "@/src/theme";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { formatDate } from "@/src/utils/date";
-import { ENTITY_TYPES, EntityType } from "@/src/data/options";
+import { formatBaseRate } from "@/src/utils/pricing";
+import { ENTITY_TYPES, EntityType, DEFAULT_CITY } from "@/src/data/options";
+import { EntityCover } from "@/src/components/EntityCover";
+import { availabilityToday, availabilityTodayLabel } from "@/src/utils/availability";
 
 const TYPES: readonly EntityType[] = ENTITY_TYPES;
 
@@ -43,6 +45,7 @@ export default function Discover() {
     try {
       const params = new URLSearchParams();
       if (q.trim()) params.set("q", q.trim());
+      params.set("city", DEFAULT_CITY);
       const data: any[] = await fetchApi(`${ENDPOINTS[type]}?${params.toString()}`);
       // Filter out malformed entries so the renderer only ever sees valid shapes
       const clean = Array.isArray(data) ? data.filter(x => x && (x.id || x.user?.id)) : [];
@@ -60,13 +63,20 @@ export default function Discover() {
         if (!item.id) return null;
         return (
           <Pressable testID={`disc-gig-${item.id}`} onPress={() => router.push(`/gig/${item.id}`)} style={styles.card}>
-            <ImageBackground source={{ uri: item.cover_url }} style={{ height: 120 }} imageStyle={{ borderTopLeftRadius: theme.radius.lg, borderTopRightRadius: theme.radius.lg }}>
-              <LinearGradient colors={["transparent", "rgba(9,9,11,0.85)"]} style={StyleSheet.absoluteFill} />
+            <EntityCover
+              kind="gig"
+              uri={item.cover_url}
+              height={120}
+              imageStyle={{ borderTopLeftRadius: theme.radius.lg, borderTopRightRadius: theme.radius.lg }}
+            >
               {item.event_type && <View style={styles.tag}><Text style={styles.tagTxt}>{String(item.event_type).toUpperCase()}</Text></View>}
-            </ImageBackground>
+            </EntityCover>
             <View style={styles.body}>
               <Text style={styles.title} numberOfLines={1}>{item.title || "Untitled gig"}</Text>
               <Text style={styles.meta}>{item.city || "—"} · {formatDate(item.date)}</Text>
+              {!!item.instrument_needed && (
+                <Text style={styles.need} numberOfLines={1}>Needs {item.instrument_needed}</Text>
+              )}
               {typeof item.budget === "number" && <Text style={styles.price}>₹{item.budget.toLocaleString("en-IN")}</Text>}
             </View>
           </Pressable>
@@ -76,13 +86,19 @@ export default function Discover() {
         const u = item.user;
         const p = item.profile || {};
         if (!u?.id) return null;
+        const avail = availabilityToday(p.availability);
+        const availLabel = availabilityTodayLabel(avail);
+        const availColor = avail === "available" ? theme.success : theme.textDim;
         return (
           <Pressable testID={`disc-mus-${u.id}`} onPress={() => router.push(`/user/${u.id}`)} style={styles.card}>
-            {p.cover_url && (
-              <ImageBackground source={{ uri: p.cover_url }} style={{ height: 100 }} imageStyle={{ borderTopLeftRadius: theme.radius.lg, borderTopRightRadius: theme.radius.lg }}>
-                <LinearGradient colors={["transparent", "rgba(9,9,11,0.9)"]} style={StyleSheet.absoluteFill} />
-              </ImageBackground>
-            )}
+            {p.cover_url ? (
+              <EntityCover
+                kind="gig"
+                uri={p.cover_url}
+                height={100}
+                imageStyle={{ borderTopLeftRadius: theme.radius.lg, borderTopRightRadius: theme.radius.lg }}
+              />
+            ) : null}
             <View style={styles.body}>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
                 {u.avatar_url ? <Image source={{ uri: u.avatar_url }} style={styles.avatar} /> :
@@ -92,7 +108,18 @@ export default function Discover() {
                   <Text style={styles.meta}>{p.city || "—"} · {(p.genres || []).slice(0, 2).join(", ") || "No genres yet"}</Text>
                 </View>
               </View>
-              {p.pricing_per_hour ? <Text style={styles.price}>₹{Number(p.pricing_per_hour).toLocaleString("en-IN")}/hr</Text> : null}
+              {!!availLabel && (
+                <View
+                  testID={`disc-mus-avail-${u.id}`}
+                  style={[styles.availBadge, { borderColor: availColor, backgroundColor: `${availColor}18` }]}
+                >
+                  <View style={[styles.availDot, { backgroundColor: availColor }]} />
+                  <Text style={[styles.availTxt, { color: availColor }]}>{availLabel}</Text>
+                </View>
+              )}
+              {p.pricing_per_hour && !p.hide_pricing ? (
+                <Text style={styles.price}>{formatBaseRate(p.pricing_per_hour, p.pricing_type || "per_hour")}</Text>
+              ) : null}
             </View>
           </Pressable>
         );
@@ -100,10 +127,13 @@ export default function Discover() {
       case "Bands": {
         if (!item.id) return null;
         return (
-          <Pressable testID={`disc-band-${item.id}`} onPress={() => router.push(`/user/${item.owner_id}`)} style={styles.card}>
-            <ImageBackground source={{ uri: item.cover_url }} style={{ height: 120 }} imageStyle={{ borderTopLeftRadius: theme.radius.lg, borderTopRightRadius: theme.radius.lg }}>
-              <LinearGradient colors={["transparent", "rgba(9,9,11,0.9)"]} style={StyleSheet.absoluteFill} />
-            </ImageBackground>
+          <Pressable testID={`disc-band-${item.id}`} onPress={() => router.push(`/listing/band/${item.id}`)} style={styles.card}>
+            <EntityCover
+              kind="band"
+              uri={item.cover_url}
+              height={120}
+              imageStyle={{ borderTopLeftRadius: theme.radius.lg, borderTopRightRadius: theme.radius.lg }}
+            />
             <View style={styles.body}>
               <Text style={styles.title}>{item.name || "Unnamed band"}</Text>
               <Text style={styles.meta}>{item.city || "—"}{(item.genres || []).length > 0 ? ` · ${(item.genres || []).join(", ")}` : ""}</Text>
@@ -119,16 +149,34 @@ export default function Discover() {
       case "Studios":
       case "Venues": {
         if (!item.id) return null;
+        const kind = type === "Studios" ? "studio" : "venue";
         return (
-          <Pressable testID={`disc-${type.toLowerCase()}-${item.id}`} onPress={() => item.owner_id && router.push(`/user/${item.owner_id}`)} style={styles.card}>
-            <ImageBackground source={{ uri: item.cover_url }} style={{ height: 130 }} imageStyle={{ borderTopLeftRadius: theme.radius.lg, borderTopRightRadius: theme.radius.lg }}>
-              <LinearGradient colors={["transparent", "rgba(9,9,11,0.85)"]} style={StyleSheet.absoluteFill} />
-            </ImageBackground>
+          <Pressable testID={`disc-${type.toLowerCase()}-${item.id}`} onPress={() => router.push(`/listing/${kind}/${item.id}`)} style={styles.card}>
+            <EntityCover
+              kind={kind}
+              uri={item.cover_url}
+              images={item.images}
+              height={130}
+              imageStyle={{ borderTopLeftRadius: theme.radius.lg, borderTopRightRadius: theme.radius.lg }}
+            />
             <View style={styles.body}>
               <Text style={styles.title}>{item.name || "Unnamed"}</Text>
               <Text style={styles.meta}>{item.city || "—"}{item.type ? ` · ${item.type}` : ""}{item.capacity ? ` · ${item.capacity} pax` : ""}</Text>
               {item.hourly_rate ? <Text style={styles.price}>₹{Number(item.hourly_rate).toLocaleString("en-IN")}/hr</Text>
                 : item.rating ? <Text style={styles.price}>{item.rating} ★</Text> : null}
+              {type === "Studios" && !!item.maps_url && (
+                <Pressable
+                  testID={`disc-studio-maps-${item.id}`}
+                  onPress={(e) => {
+                    e?.stopPropagation?.();
+                    Linking.openURL(item.maps_url).catch(() => {});
+                  }}
+                  style={styles.mapsLink}
+                >
+                  <Ionicons name="navigate-outline" size={13} color={theme.brand} />
+                  <Text style={styles.mapsLinkTxt}>Open in Maps</Text>
+                </Pressable>
+              )}
             </View>
           </Pressable>
         );
@@ -136,11 +184,16 @@ export default function Discover() {
       case "Equipment": {
         if (!item.id) return null;
         return (
-          <Pressable testID={`disc-eq-${item.id}`} onPress={() => item.owner_id && router.push(`/user/${item.owner_id}`)} style={styles.card}>
-            <ImageBackground source={{ uri: item.cover_url }} style={{ height: 130 }} imageStyle={{ borderTopLeftRadius: theme.radius.lg, borderTopRightRadius: theme.radius.lg }}>
-              <LinearGradient colors={["transparent", "rgba(9,9,11,0.85)"]} style={StyleSheet.absoluteFill} />
+          <Pressable testID={`disc-eq-${item.id}`} onPress={() => router.push(`/listing/equipment/${item.id}`)} style={styles.card}>
+            <EntityCover
+              kind="equipment"
+              uri={item.cover_url}
+              images={item.images}
+              height={130}
+              imageStyle={{ borderTopLeftRadius: theme.radius.lg, borderTopRightRadius: theme.radius.lg }}
+            >
               {item.listing_type && <View style={styles.tag}><Text style={styles.tagTxt}>{String(item.listing_type).toUpperCase()}</Text></View>}
-            </ImageBackground>
+            </EntityCover>
             <View style={styles.body}>
               <Text style={styles.title} numberOfLines={1}>{item.title || "Untitled"}</Text>
               <Text style={styles.meta}>{item.city || "—"}{item.category ? ` · ${item.category}` : ""}</Text>
@@ -152,10 +205,13 @@ export default function Discover() {
       case "Lessons": {
         if (!item.id) return null;
         return (
-          <Pressable testID={`disc-lesson-${item.id}`} onPress={() => item.teacher_id && router.push(`/user/${item.teacher_id}`)} style={styles.card}>
-            <ImageBackground source={{ uri: item.cover_url }} style={{ height: 120 }} imageStyle={{ borderTopLeftRadius: theme.radius.lg, borderTopRightRadius: theme.radius.lg }}>
-              <LinearGradient colors={["transparent", "rgba(9,9,11,0.85)"]} style={StyleSheet.absoluteFill} />
-            </ImageBackground>
+          <Pressable testID={`disc-lesson-${item.id}`} onPress={() => router.push(`/listing/lesson/${item.id}`)} style={styles.card}>
+            <EntityCover
+              kind="lesson"
+              uri={item.cover_url}
+              height={120}
+              imageStyle={{ borderTopLeftRadius: theme.radius.lg, borderTopRightRadius: theme.radius.lg }}
+            />
             <View style={styles.body}>
               <Text style={styles.title}>{item.title || "Untitled lesson"}</Text>
               <Text style={styles.meta}>{[item.subject, item.format, item.city].filter(Boolean).join(" · ")}</Text>
@@ -226,8 +282,18 @@ const styles = StyleSheet.create({
   body: { padding: 14 },
   title: { ...type.titleMd, color: theme.text, fontWeight: "700" },
   meta: { ...type.caption, color: theme.textDim, marginTop: 4 },
+  need: { ...type.caption, color: theme.textMid, fontWeight: "700", marginTop: 6 },
   price: { ...type.titleMd, color: theme.brand, fontWeight: "800", marginTop: 8 },
+  mapsLink: { flexDirection: "row", alignItems: "center", gap: 4, marginTop: 8, alignSelf: "flex-start" },
+  mapsLinkTxt: { ...type.tiny, color: theme.brand, fontWeight: "700" },
   avatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: theme.bg3, alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  availBadge: {
+    alignSelf: "flex-start", flexDirection: "row", alignItems: "center", gap: 6,
+    marginTop: 10, paddingHorizontal: 10, paddingVertical: 5,
+    borderRadius: theme.radius.pill, borderWidth: 1,
+  },
+  availDot: { width: 7, height: 7, borderRadius: 4 },
+  availTxt: { ...type.tiny, fontWeight: "700" },
   pillRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 },
   pill: { backgroundColor: theme.brandTint, borderColor: theme.brand, borderWidth: 1, paddingHorizontal: 8, paddingVertical: 3, borderRadius: theme.radius.pill },
   pillTxt: { ...type.tiny, color: theme.brand, fontWeight: "700" },

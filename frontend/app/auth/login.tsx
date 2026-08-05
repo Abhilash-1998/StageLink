@@ -30,7 +30,7 @@ export default function Login() {
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
           <Text style={styles.title}>Welcome back</Text>
-          <Text style={styles.sub}>Sign in to your StageLink account</Text>
+          <Text style={styles.sub}>Sign in to your gigZee account</Text>
 
           <Text style={styles.label}>Email</Text>
           <TextInput
@@ -38,12 +38,18 @@ export default function Login() {
             style={styles.input} value={email} onChangeText={setEmail}
             autoCapitalize="none" keyboardType="email-address" placeholder="you@studio.com"
             placeholderTextColor={theme.textDim}
+            textContentType="username"
+            autoComplete="email"
           />
           <Text style={styles.label}>Password</Text>
           <TextInput
             testID="login-password-input"
             style={styles.input} value={password} onChangeText={setPassword}
             secureTextEntry placeholder="••••••••" placeholderTextColor={theme.textDim}
+            textContentType="password"
+            autoComplete="password"
+            autoCorrect={false}
+            spellCheck={false}
           />
           {err && <Text style={styles.err} testID="login-error">{err}</Text>}
 

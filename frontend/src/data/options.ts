@@ -1,17 +1,23 @@
-// Centralized static UI options — single source of truth for chip lists,
-// categories, presets used across auth/profile/create screens.
-// If any of these need to become dynamic later, migrate this module into a
-// repository backed by GET /api/options and keep the same exported names.
+// Centralized static UI options — chip lists and categories for forms.
+// No stock photos or mock content — users upload their own media.
+//
+// Live lists:
+//   GET /api/config/onboarding       → cities, interests
+//   GET /api/config/profile-options  → professions, skills, genres, instruments, languages
+// Values below are offline fallbacks only.
 
-export const CITIES = [
-  "Mumbai", "Bengaluru", "Delhi", "Pune", "Hyderabad", "Chennai", "Kolkata",
-];
+/** Launch city fallback — live list comes from the API. */
+export const DEFAULT_CITY = "Hyderabad";
+export const CITIES = [DEFAULT_CITY] as const;
+export type City = (typeof CITIES)[number];
 
+/** Fallback interests if /config/onboarding is unreachable. */
 export const INTERESTS = [
   "Perform", "Hire talent", "Sell equipment", "Rent equipment",
   "Teach", "Book studios", "Build a band",
 ];
 
+/** Fallbacks if /config/profile-options is unreachable. */
 export const GENRES = [
   "Jazz", "Pop", "Rock", "Indie", "EDM", "Classical", "Fusion",
   "R&B", "Soul", "House", "Bollywood", "Carnatic", "Hindustani",
@@ -48,42 +54,5 @@ export const LESSON_SUBJECTS = [
 
 export const EVENT_TYPES = ["wedding", "corporate", "club", "festival", "private"];
 
-// Preset image choices — used only when the user has no upload yet.
-export const AVATAR_CHOICES = [
-  "https://images.unsplash.com/photo-1516280440614-37939bbacd81?w=400",
-  "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=400",
-  "https://images.unsplash.com/photo-1509228468518-180dd4864904?w=400",
-  "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=400",
-  "https://images.unsplash.com/photo-1520785643438-5bf77931f493?w=400",
-];
-
-export const COVER_CHOICES = [
-  "https://images.unsplash.com/photo-1415201364774-f6f0bb35f28f?w=1200",
-  "https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=1200",
-  "https://images.unsplash.com/photo-1533174072545-7a4b6ad7a6c3?w=1200",
-  "https://images.unsplash.com/photo-1429962714451-bb934ecdc4ec?w=1200",
-];
-
-export const GIG_COVERS = [
-  "https://images.unsplash.com/photo-1415201364774-f6f0bb35f28f?w=800",
-  "https://images.unsplash.com/photo-1470229722913-7c0e2dbbafd3?w=800",
-  "https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=800",
-  "https://images.unsplash.com/photo-1519741497674-611481863552?w=800",
-];
-
 export const ENTITY_TYPES = ["Gigs", "Musicians", "Bands", "Studios", "Equipment", "Lessons", "Venues"] as const;
 export type EntityType = typeof ENTITY_TYPES[number];
-
-// Default cover images used when the user hasn't uploaded one at create time.
-export const DEFAULT_COVERS: Record<string, string> = {
-  band:      "https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=800",
-  equipment: "https://images.unsplash.com/photo-1510915361894-db8b60106cb1?w=800",
-  studio:    "https://images.unsplash.com/photo-1598488035139-bdbb2231ce04?w=800",
-  lesson:    "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=800",
-};
-
-// Role-affordance card art on the signup role screen.
-export const ROLE_CARD_IMAGES = {
-  organizer: "https://images.unsplash.com/photo-1459749411175-04bf5292ceea?w=800",
-  musician:  "https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=800",
-};

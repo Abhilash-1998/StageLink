@@ -22,6 +22,16 @@ export default function UserProfile() {
     if (id === user?.id) { router.replace("/(tabs)/profile"); return; }
     try {
       const d: ProfilePayload = await fetchApi(`/profile/${id}`);
+      const existing = d?.profile?.portfolio_items;
+      if (!Array.isArray(existing) || existing.length === 0) {
+        try {
+          const m: any = await fetchApi(`/profile/musician/${id}`);
+          const items = m?.profile?.portfolio_items;
+          if (Array.isArray(items) && items.length > 0) {
+            d.profile = { ...(d.profile || {}), portfolio_items: items };
+          }
+        } catch { /* keep unified */ }
+      }
       setData(d);
     } catch { setData(null); }
     finally { setLoading(false); }

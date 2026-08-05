@@ -1,37 +1,62 @@
 {
   "expo": {
-    "name": "frontend",
-    "slug": "frontend",
+    "name": "gigZee",
+    "slug": "gigze",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "frontend",
+    "scheme": "gigze",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+    "notification": {
+      "icon": "./assets/images/notification-icon.png",
+      "color": "#F97316",
+      "androidMode": "default",
+      "androidCollapsedTitle": "#{unread_notifications} new updates"
+    },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.emergent.gigmarketplacepro.k5p3ff",
+      "bundleIdentifier": "com.gigze.GigZe",
+      "googleServicesFile": "./GoogleService-Info.plist",
       "infoPlist": {
         "NSCameraUsageDescription": "Capture performance photos and videos",
         "NSPhotoLibraryUsageDescription": "Share photos and videos from your library",
         "NSMicrophoneUsageDescription": "Record audio for performance videos",
-        "NSLocationWhenInUseUsageDescription": "Show gigs and studios near you"
+        "NSLocationWhenInUseUsageDescription": "Show gigs and studios near you",
+        "UIBackgroundModes": [
+          "remote-notification",
+          "remote-notification"
+        ]
       }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#000000"
+        "backgroundColor": "#0B0F1A",
+        "monochromeImage": "./assets/images/notification-icon.png"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.emergent.gigmarketplacepro.k5p3ff",
+      "package": "com.gigze.GigZe",
+      "googleServicesFile": "./google-services.json",
       "permissions": [
-        "CAMERA",
-        "READ_MEDIA_IMAGES",
-        "READ_MEDIA_VIDEO",
-        "RECORD_AUDIO",
-        "ACCESS_FINE_LOCATION",
-        "ACCESS_COARSE_LOCATION"
+        "android.permission.CAMERA",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_MEDIA_VIDEO",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.VIBRATE",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.CAMERA",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_MEDIA_VIDEO",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.VIBRATE",
+        "android.permission.POST_NOTIFICATIONS"
       ]
     },
     "web": {
@@ -62,10 +87,31 @@
         {
           "locationAlwaysAndWhenInUsePermission": "Show nearby gigs, studios, and musicians"
         }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/notification-icon.png",
+          "color": "#F97316",
+          "defaultChannel": "default",
+          "sounds": []
+        }
       ]
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "backendUrl": "https://stagelink-api-production-f0c5.up.railway.app",
+      "eas": {
+        "projectId": "01fadb01-21e3-41f6-a377-82857e21445f"
+      }
+    },
+    "owner": "abhilashanand",
+    "runtimeVersion": "1.0.0",
+    "updates": {
+      "url": "https://u.expo.dev/01fadb01-21e3-41f6-a377-82857e21445f"
     }
   }
 }

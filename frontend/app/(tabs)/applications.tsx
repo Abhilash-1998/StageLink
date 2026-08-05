@@ -38,13 +38,21 @@ export default function Applications() {
         ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
         renderItem={({ item }) => {
           if (isOrg) {
+            const filled = item.status === "filled";
+            const statusColor = filled ? theme.success : theme.brand;
             return (
               <Pressable testID={`org-gig-${item.id}`} onPress={() => router.push(`/gig/${item.id}`)} style={styles.card}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.title}>{item.title}</Text>
                   <Text style={styles.meta}>{item.city} · {formatDate(item.date)}</Text>
                   <View style={styles.badgeRow}>
-                    <View style={styles.badge}><Ionicons name="people" size={11} color={theme.text} /><Text style={styles.badgeTxt}>{item.applications_count} applicants</Text></View>
+                    <View style={[styles.badge, { backgroundColor: `${statusColor}22`, borderColor: statusColor }]}>
+                      <Text style={[styles.badgeTxt, { color: statusColor }]}>{filled ? "FILLED" : "OPEN"}</Text>
+                    </View>
+                    <View style={styles.badge}>
+                      <Ionicons name="people" size={11} color={theme.text} />
+                      <Text style={styles.badgeTxt}>{item.applications_count} applicants</Text>
+                    </View>
                     <Text style={styles.price}>₹{item.budget.toLocaleString("en-IN")}</Text>
                   </View>
                 </View>
@@ -54,6 +62,11 @@ export default function Applications() {
           }
           const g = item.gig; const a = item.application;
           const color = a.status === "pending" ? theme.warning : a.status === "accepted" ? theme.success : theme.error;
+          const label =
+            a.status === "accepted" ? "ACCEPTED" :
+            a.status === "withdrawn" ? "WITHDRAWN" :
+            a.status === "rejected" ? (g.status === "filled" ? "NOT SELECTED" : "DECLINED") :
+            "PENDING";
           return (
             <Pressable testID={`app-${a.id}`} onPress={() => router.push(`/gig/${g.id}`)} style={styles.card}>
               <View style={{ flex: 1 }}>
@@ -61,8 +74,13 @@ export default function Applications() {
                 <Text style={styles.meta}>{g.city} · {formatDate(g.date)}</Text>
                 <View style={styles.badgeRow}>
                   <View style={[styles.badge, { backgroundColor: `${color}22`, borderColor: color }]}>
-                    <Text style={[styles.badgeTxt, { color }]}>{a.status.toUpperCase()}</Text>
+                    <Text style={[styles.badgeTxt, { color }]}>{label}</Text>
                   </View>
+                  {g.status === "filled" && a.status !== "accepted" && (
+                    <View style={[styles.badge, { backgroundColor: `${theme.textDim}22`, borderColor: theme.textDim }]}>
+                      <Text style={[styles.badgeTxt, { color: theme.textDim }]}>FILLED</Text>
+                    </View>
+                  )}
                   <Text style={styles.price}>₹{g.budget.toLocaleString("en-IN")}</Text>
                 </View>
               </View>
@@ -91,7 +109,7 @@ const styles = StyleSheet.create({
   card: { flexDirection: "row", alignItems: "center", backgroundColor: theme.bg2, padding: 16, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: theme.border },
   title: { ...type.bodyMd, color: theme.text, fontWeight: "700" },
   meta: { ...type.caption, color: theme.textDim, marginTop: 4 },
-  badgeRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 10 },
+  badgeRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 10, flexWrap: "wrap", gap: 6 },
   badge: { flexDirection: "row", alignItems: "center", gap: 4, backgroundColor: theme.bg3, paddingHorizontal: 10, paddingVertical: 4, borderRadius: theme.radius.pill, borderWidth: 1, borderColor: theme.border },
   badgeTxt: { ...type.tiny, color: theme.text, fontWeight: "700", letterSpacing: 0.3 },
   price: { ...type.titleMd, color: theme.brand, fontWeight: "800" },

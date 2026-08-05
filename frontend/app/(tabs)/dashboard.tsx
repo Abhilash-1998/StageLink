@@ -30,7 +30,7 @@ export default function Dashboard() {
     <SafeAreaView style={styles.bg} edges={["top"]}>
       <ScrollView contentContainerStyle={{ paddingBottom: 120 }}>
         <View style={styles.header}>
-          <Text style={styles.h1}>Insights</Text>
+          <Text style={styles.h1}>Analytics</Text>
           <Text style={styles.sub}>Your performance at a glance</Text>
         </View>
 
@@ -47,7 +47,9 @@ export default function Dashboard() {
               <Card label="Applications" value={stats?.total_applications || 0} icon="briefcase-outline" />
               <Card label="Pending" value={stats?.pending || 0} icon="time-outline" />
               <Card label="Accepted" value={stats?.accepted || 0} icon="checkmark-circle-outline" />
+              {/* Rating hidden for now
               <Card label="Rating" value={`${stats?.rating || 0} ★`} icon="star-outline" />
+              */}
             </>
           )}
         </View>
@@ -64,7 +66,7 @@ export default function Dashboard() {
             )}
             <Pressable testID="quick-create-post" onPress={() => router.push("/(tabs)/create")} style={styles.action}>
               <View style={styles.actionIcon}><Ionicons name="megaphone" size={20} color={theme.brand} /></View>
-              <View style={{ flex: 1 }}><Text style={styles.actionTitle}>Share to community</Text><Text style={styles.actionSub}>Post updates, performances, or thoughts</Text></View>
+              <View style={{ flex: 1 }}><Text style={styles.actionTitle}>Post to community</Text><Text style={styles.actionSub}>Post updates, performances, or thoughts</Text></View>
               <Ionicons name="chevron-forward" size={18} color={theme.textDim} />
             </Pressable>
           </View>
