@@ -1,6 +1,6 @@
 """
-StageLink Iteration 3 — Profile Management module tests.
-Covers PATCH profile, portfolio CRUD, services CRUD, and /profile/completion.
+gigZee Iteration 3 — Profile Management module tests.
+Creates its own musician via make_musician (no demo seed accounts).
 """
 import os
 import pytest
@@ -8,27 +8,13 @@ import requests
 from dotenv import load_dotenv
 from pathlib import Path
 
-load_dotenv(Path(__file__).parent.parent.parent / 'frontend' / '.env')
-BASE_URL = os.environ.get('EXPO_PUBLIC_BACKEND_URL', 'https://gig-marketplace-pro-4.preview.emergentagent.com').rstrip('/')
-
-MUSICIAN_EMAIL = "ariya.kapoor@stagelink.dev"
-MUSICIAN_PASSWORD = "demo1234"
+from conftest import BASE_URL, make_musician
 
 
-# --------------- fixtures ---------------
 @pytest.fixture(scope="module")
-def token():
-    r = requests.post(f"{BASE_URL}/api/auth/login",
-                      json={"email": MUSICIAN_EMAIL, "password": MUSICIAN_PASSWORD})
-    assert r.status_code == 200, f"Login failed: {r.status_code} {r.text}"
-    body = r.json()
-    tok = body.get("access_token") or body.get("token")
-    assert tok, f"No token in login response: {body}"
-    # Ensure active_role is musician for these tests
-    requests.post(f"{BASE_URL}/api/auth/active-role",
-                  headers={"Authorization": f"Bearer {tok}", "Content-Type": "application/json"},
-                  json={"active_role": "musician"})
-    return tok
+def token(api_client):
+    u = make_musician(api_client, "Profile Mgmt Musician")
+    return u["token"]
 
 
 @pytest.fixture
@@ -36,7 +22,6 @@ def h(token):
     return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
 
-# --------------- baseline profile fetch (to identify user_id) ---------------
 @pytest.fixture(scope="module")
 def me(token):
     r = requests.get(f"{BASE_URL}/api/auth/me", headers={"Authorization": f"Bearer {token}"})
@@ -130,6 +115,7 @@ class TestPortfolio:
         item = r.json()
         assert 'id' in item and 'created_at' in item
         assert item['title'] == payload['title']
+        assert item.get('media_type') == 'link'
         item_id = item['id']
 
         # Verify appears in profile
@@ -153,6 +139,42 @@ class TestPortfolio:
         # Known minor: modified_count reports 1 for missing IDs because updated_at $set always triggers.
         # Assert only that the endpoint responds successfully with a numeric 'deleted' field.
         assert isinstance(r.json().get('deleted'), int)
+
+    def test_portfolio_link_limit(self, h, me):
+        """Max 5 external portfolio links."""
+        # Clean slate — delete existing items for this user
+        prof = requests.get(f"{BASE_URL}/api/profile/musician/{me['id']}").json().get('profile') or {}
+        for it in (prof.get('portfolio_items') or []):
+            requests.delete(f"{BASE_URL}/api/profile/portfolio/{it['id']}", headers=h)
+
+        ids = []
+        for i in range(5):
+            r = requests.post(f"{BASE_URL}/api/profile/portfolio", headers=h, json={
+                "title": f"TEST_link_{i}",
+                "media_url": f"https://drive.google.com/file/d/test{i}/view",
+                "media_type": "link",
+            })
+            assert r.status_code == 200, r.text
+            assert r.json().get('media_type') == 'link'
+            ids.append(r.json()['id'])
+
+        blocked = requests.post(f"{BASE_URL}/api/profile/portfolio", headers=h, json={
+            "title": "TEST_link_over",
+            "media_url": "https://drive.google.com/file/d/over/view",
+            "media_type": "image",
+        })
+        assert blocked.status_code == 400, blocked.text
+
+        # Non-http URL rejected
+        bad = requests.post(f"{BASE_URL}/api/profile/portfolio", headers=h, json={
+            "title": "TEST_bad",
+            "media_url": "not-a-url",
+        })
+        assert bad.status_code == 422, bad.text
+
+        # cleanup
+        for iid in ids:
+            requests.delete(f"{BASE_URL}/api/profile/portfolio/{iid}", headers=h)
 
 
 # ===================== Services =====================
@@ -216,7 +238,7 @@ class TestCompletion:
             'avatar_url': 'https://example.com/a.jpg',
             'cover_url': 'https://example.com/c.jpg',
             'bio': 'TEST_bio filled for completion',
-            'city': 'Mumbai',
+            'city': 'Hyderabad',
             'genres': ['Jazz'],
             'instruments': ['Vocals'],
             'professions': ['Vocalist'],

@@ -1,42 +1,260 @@
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
-import os, logging, uuid, jwt, bcrypt
+import os, logging, uuid, jwt, bcrypt, re
 from pathlib import Path
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, Field, EmailStr, field_validator
 from typing import List, Optional, Literal
 from datetime import datetime, timedelta, timezone
+from pg_store import db, init_pool, close_pool
+from push import register_device, unregister_device
+from services.notifications import (
+    NotificationService,
+    get_prefs as get_notification_prefs,
+    set_prefs as set_notification_prefs,
+    list_inbox,
+    mark_read,
+    mark_all_read,
+    delete_notification,
+    unread_count,
+    DEFAULT_PREFS,
+    list_push_devices,
+    deliver_push_detailed,
+)
+from services.analytics import AnalyticsService, admin_overview
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-MONGO_URL = os.environ['MONGO_URL']
-DB_NAME = os.environ['DB_NAME']
 JWT_SECRET = os.environ.get('JWT_SECRET', 'stagelink-dev-secret-change-me')
 JWT_ALGO = 'HS256'
 EMERGENT_LLM_KEY = os.environ.get('EMERGENT_LLM_KEY', '')
+# Comma-separated user ids allowed to hit /api/admin/analytics
+ADMIN_USER_IDS = {
+    x.strip() for x in os.environ.get('ADMIN_USER_IDS', '').split(',') if x.strip()
+}
+# Launch market — expand in a later release
+ALLOWED_CITY = 'Hyderabad'
 
-client = AsyncIOMotorClient(MONGO_URL)
-db = client[DB_NAME]
+# Generic cover images when a listing has no user photo (Discover cards stay non-blank)
+DEFAULT_COVERS = {
+    'band': 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=1200&q=80',
+    'equipment': 'https://images.unsplash.com/photo-1511379938547-c1f69419868d?auto=format&fit=crop&w=1200&q=80',
+    'studio': 'https://images.unsplash.com/photo-1598488035139-bdbb2231ce04?auto=format&fit=crop&w=1200&q=80',
+    'lesson': 'https://images.unsplash.com/photo-1514320291840-3095421dfa9a?auto=format&fit=crop&w=1200&q=80',
+    'venue': 'https://images.unsplash.com/photo-1470229722913-7c0e2dbbafd3?auto=format&fit=crop&w=1200&q=80',
+    'gig': 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?auto=format&fit=crop&w=1200&q=80',
+}
 
-app = FastAPI(title="StageLink API")
+def _default_cover(kind: str, cover_url: Optional[str] = None, images: Optional[list] = None) -> str:
+    if cover_url and str(cover_url).strip():
+        return str(cover_url).strip()
+    if images:
+        for u in images:
+            if u and str(u).strip():
+                return str(u).strip()
+    return DEFAULT_COVERS.get(kind, DEFAULT_COVERS['gig'])
+
+def _force_city(v) -> str:
+    return ALLOWED_CITY
+
+def _city_query(city: Optional[str] = None) -> dict:
+    """Launch market: always scope list queries to Hyderabad."""
+    return {'city': {'$regex': f'^{ALLOWED_CITY}$', '$options': 'i'}}
+
+def _normalize_phone(v):
+    """Optional mobile — allow 10–15 digits, optional leading +."""
+    if v is None:
+        return None
+    if not isinstance(v, str):
+        v = str(v)
+    s = re.sub(r'[\s\-()]', '', v.strip())
+    if not s:
+        return None
+    if not re.fullmatch(r'\+?[0-9]{10,15}', s):
+        raise ValueError('Enter a valid mobile number (10–15 digits)')
+    return s
+
+def _normalize_portfolio_items(items) -> list:
+    """Always return a list of portfolio dicts; drop unusable entries."""
+    if not isinstance(items, list):
+        return []
+    out = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        url = str(it.get('media_url') or '').strip()
+        if not url:
+            continue
+        # Link-based portfolio: keep http(s). Legacy data:/file: uploads are
+        # omitted from profile payloads (they bloat responses and don't open).
+        if url.startswith('http://') or url.startswith('https://'):
+            out.append(dict(it))
+        elif url.startswith('data:') or url.startswith('file://') or url.startswith('content://'):
+            continue
+        else:
+            # Relative /api/media/... still useful for older uploads
+            out.append(dict(it))
+    return out
+
+
+def _merge_list_by_id(lists: list) -> list:
+    """Union list-of-dicts by `id`, preserving first-seen order."""
+    merged = []
+    seen = set()
+    for lst in lists:
+        if not isinstance(lst, list):
+            continue
+        for it in lst:
+            if not isinstance(it, dict):
+                continue
+            iid = it.get('id')
+            if iid:
+                if iid in seen:
+                    continue
+                seen.add(iid)
+            merged.append(dict(it))
+    return merged
+
+
+def _merge_musician_docs(docs: list) -> dict:
+    """Merge duplicate musician rows for the same user_id into one profile."""
+    if not docs:
+        return {}
+    if len(docs) == 1:
+        return dict(docs[0])
+    # Prefer the most complete document as the base (most keys / longest bio).
+    ranked = sorted(
+        docs,
+        key=lambda d: (
+            len(d.keys()),
+            len(str(d.get('bio') or '')),
+            len(d.get('portfolio_items') or []) if isinstance(d.get('portfolio_items'), list) else 0,
+        ),
+        reverse=True,
+    )
+    base = dict(ranked[0])
+    base['portfolio_items'] = _merge_list_by_id([d.get('portfolio_items') for d in docs])
+    base['services'] = _merge_list_by_id([d.get('services') for d in docs])
+    # Fill missing scalar fields from other docs
+    for d in ranked[1:]:
+        for k, v in d.items():
+            if k in ('portfolio_items', 'services'):
+                continue
+            if base.get(k) in (None, '', [], {}) and v not in (None, '', [], {}):
+                base[k] = v
+    return base
+
+
+async def _load_musician(user_id: str) -> Optional[dict]:
+    """Load a musician profile, merging duplicates and normalizing portfolio."""
+    docs = await db.musicians.find({'user_id': user_id}, {'_id': 0}).to_list(50)
+    if not docs:
+        return None
+    m = _merge_musician_docs(docs)
+    m['portfolio_items'] = _normalize_portfolio_items(m.get('portfolio_items'))
+    if not isinstance(m.get('services'), list):
+        m['services'] = []
+    # If duplicates exist, sync merged portfolio/services onto every row so
+    # subsequent find_one hits stay consistent.
+    if len(docs) > 1:
+        try:
+            await db.musicians.update_many(
+                {'user_id': user_id},
+                {'$set': {
+                    'portfolio_items': m.get('portfolio_items') or [],
+                    'services': m.get('services') or [],
+                    'updated_at': now_iso(),
+                }},
+            )
+        except Exception:
+            pass
+    return m
+
+
+def _public_profile(m: dict, is_self: bool = False) -> dict:
+    """Strip private contact fields for non-owners when hide_contact is on.
+
+    Phone is public only when hide_contact is explicitly False. Missing /
+    True / truthy → hide from other viewers.
+    """
+    out = dict(m or {})
+    # Always expose a normalized portfolio list so the profile UI can render links.
+    out['portfolio_items'] = _normalize_portfolio_items(out.get('portfolio_items'))
+    if not isinstance(out.get('services'), list):
+        out['services'] = []
+    if is_self:
+        return out
+    # Contact: opt-in to share (explicit False = public)
+    if out.get('hide_contact') is not False:
+        out.pop('phone', None)
+        out['hide_contact'] = True
+    if out.get('hide_pricing'):
+        out['pricing_per_hour'] = None
+        out['pricing_type'] = None
+        if isinstance(out.get('services'), list):
+            out['services'] = [{**s, 'price': None} if isinstance(s, dict) else s for s in out['services']]
+    if out.get('hide_location'):
+        out.pop('state', None)
+    return out
+
+DEFAULT_ONBOARDING_CONFIG = {
+    'cities': [ALLOWED_CITY],
+    'default_city': ALLOWED_CITY,
+    'city_note': 'gigZee is live in Hyderabad for now. More cities soon.',
+    'interests_prompt': 'What brings you to gigZee?',
+    'interests': [
+        'Perform', 'Hire talent', 'Sell equipment', 'Rent equipment',
+        'Teach', 'Book studios', 'Build a band',
+    ],
+}
+
+DEFAULT_PROFILE_OPTIONS = {
+    'professions': [
+        'Singer', 'Guitarist', 'Drummer', 'Keyboardist', 'Violinist', 'DJ',
+        'Music Producer', 'Sound Engineer', 'Vocal Coach', 'Composer',
+        'Music Teacher', 'Event Host',
+    ],
+    'skills': [
+        'Live Performance', 'Music Production', 'Recording', 'Mixing',
+        'Mastering', 'Song Writing', 'Improvisation', 'Session Work',
+    ],
+    'genres': [
+        'Jazz', 'Pop', 'Rock', 'Indie', 'EDM', 'Classical', 'Fusion',
+        'R&B', 'Soul', 'House', 'Bollywood', 'Carnatic', 'Hindustani',
+    ],
+    'instruments': [
+        'Vocals', 'Guitar', 'Keyboard', 'Violin', 'Drums', 'Bass',
+        'DJ Deck', 'Saxophone', 'Tabla', 'Sitar',
+    ],
+    'languages': [
+        'English', 'Hindi', 'Marathi', 'Tamil', 'Telugu',
+        'Kannada', 'Punjabi', 'Bengali',
+    ],
+    # Base-rate / service units — not always hourly
+    'pricing_types': [
+        'per_event', 'per_session', 'per_hour', 'per_song', 'per_day', 'starting_at',
+    ],
+}
+
+PricingType = Literal['per_event', 'per_session', 'per_hour', 'per_song', 'per_day', 'starting_at']
+
+
+app = FastAPI(title="gigZee API")
 api = APIRouter(prefix="/api")
 security = HTTPBearer(auto_error=False)
 
 # ================== Models ==================
 Role = Literal['musician', 'organizer']
 
-import re
 def _validate_password(p: str) -> str:
     if not isinstance(p, str) or len(p) < 8:
         raise ValueError("Password must be at least 8 characters")
     if not re.search(r'[A-Za-z]', p) or not re.search(r'\d', p):
         raise ValueError("Password must contain letters and numbers")
     return p
-
-from pydantic import field_validator
 
 class RegisterIn(BaseModel):
     email: EmailStr
@@ -87,7 +305,7 @@ class MusicianProfileIn(BaseModel):
     bio: Optional[str] = ""
     tagline: Optional[str] = None
     username: Optional[str] = None
-    city: str
+    city: str = ALLOWED_CITY
     state: Optional[str] = None
     country: Optional[str] = "India"
     genres: List[str] = []
@@ -95,12 +313,16 @@ class MusicianProfileIn(BaseModel):
     languages: List[str] = []
     professions: List[str] = []
     skills: List[str] = []
+    interests: List[str] = []
     experience_years: int = 0
+    # Amount stored in pricing_per_hour for backward compatibility; unit is pricing_type
     pricing_per_hour: int = 0
+    pricing_type: PricingType = 'per_event'
     willing_to_travel: bool = True
     travel_radius_km: Optional[int] = 50
     dob: Optional[str] = None
     gender: Optional[str] = None
+    phone: Optional[str] = None
     demo_video_url: Optional[str] = None
     youtube_url: Optional[str] = None
     instagram_url: Optional[str] = None
@@ -117,6 +339,14 @@ class MusicianProfileIn(BaseModel):
     hide_location: Optional[bool] = False
     hide_contact: Optional[bool] = False
 
+    @field_validator('city', mode='before')
+    @classmethod
+    def _city(cls, v): return _force_city(v)
+
+    @field_validator('phone', mode='before')
+    @classmethod
+    def _phone(cls, v): return _normalize_phone(v)
+
 class ProfilePatchIn(BaseModel):
     """Partial update for a musician profile. All fields optional."""
     bio: Optional[str] = None
@@ -130,12 +360,15 @@ class ProfilePatchIn(BaseModel):
     languages: Optional[List[str]] = None
     professions: Optional[List[str]] = None
     skills: Optional[List[str]] = None
+    interests: Optional[List[str]] = None
     experience_years: Optional[int] = None
     pricing_per_hour: Optional[int] = None
+    pricing_type: Optional[PricingType] = None
     willing_to_travel: Optional[bool] = None
     travel_radius_km: Optional[int] = None
     dob: Optional[str] = None
     gender: Optional[str] = None
+    phone: Optional[str] = None
     demo_video_url: Optional[str] = None
     youtube_url: Optional[str] = None
     instagram_url: Optional[str] = None
@@ -153,32 +386,80 @@ class ProfilePatchIn(BaseModel):
     hide_contact: Optional[bool] = None
     availability: Optional[dict] = None  # {weekly:{mon..sun:[slots]}, unavailable_dates:[], vacation:{start,end}}
 
+    @field_validator('city', mode='before')
+    @classmethod
+    def _city(cls, v):
+        if v is None: return None
+        return _force_city(v)
+
+    @field_validator('phone', mode='before')
+    @classmethod
+    def _phone(cls, v):
+        if v is None: return None
+        return _normalize_phone(v)
+
 class PortfolioItemIn(BaseModel):
-    title: str
+    """Portfolio entry as an external link (Google Drive, Dropbox, YouTube, etc.)."""
+    title: Optional[str] = "Portfolio link"
     description: Optional[str] = ""
     category: Optional[str] = "Performance"
-    media_url: str
-    media_type: Literal['image', 'video', 'audio', 'link', 'pdf'] = 'image'
+    media_url: str  # https link
+    media_type: Literal['link', 'image', 'video'] = 'link'
     thumbnail_url: Optional[str] = None
     tags: List[str] = []
     date: Optional[str] = None
+
+    @field_validator('title', mode='before')
+    @classmethod
+    def _title(cls, v):
+        t = (str(v) if v is not None else "").strip()
+        return (t or "Portfolio link")[:120]
+
+    @field_validator('media_url')
+    @classmethod
+    def _media_url_https(cls, v: str):
+        url = (v or "").strip()
+        if not url:
+            raise ValueError("Portfolio link is required")
+        # Allow paste without scheme
+        if not (url.startswith("http://") or url.startswith("https://")):
+            url = f"https://{url}"
+        if len(url) > 2000:
+            raise ValueError("Link is too long")
+        return url
+
+    @field_validator('media_type', mode='before')
+    @classmethod
+    def _media_type_link(cls, v):
+        # Force link-based portfolio (uploads removed).
+        return 'link'
+
+
+# Max external portfolio links per profile
+PORTFOLIO_MAX_LINKS = 5
+PORTFOLIO_MAX_IMAGES = 5  # legacy alias for older clients
+PORTFOLIO_MAX_VIDEOS = 0
 
 class ServiceIn(BaseModel):
     title: str
     description: str
     price: int
-    pricing_type: Literal['per_hour', 'per_event', 'per_song', 'starting_at'] = 'per_hour'
+    pricing_type: PricingType = 'per_event'
     duration: Optional[str] = None
 
 class OrganizerProfileIn(BaseModel):
     org_name: str
-    city: str
+    city: str = ALLOWED_CITY
     bio: Optional[str] = ""
     avatar_url: Optional[str] = None
 
+    @field_validator('city', mode='before')
+    @classmethod
+    def _city(cls, v): return _force_city(v)
+
 class GigCreate(BaseModel):
     title: str
-    city: str
+    city: str = ALLOWED_CITY
     date: str
     event_type: str
     genre: str
@@ -186,6 +467,10 @@ class GigCreate(BaseModel):
     budget: int
     description: str
     cover_url: Optional[str] = None
+
+    @field_validator('city', mode='before')
+    @classmethod
+    def _city(cls, v): return _force_city(v)
 
 class ApplicationIn(BaseModel):
     gig_id: str
@@ -201,58 +486,182 @@ class MessageIn(BaseModel):
     to_user_id: Optional[str] = None
     text: str
 
+class DeviceRegisterIn(BaseModel):
+    token: Optional[str] = None
+    expo_push_token: Optional[str] = None
+    platform: Optional[str] = None
+    device_name: Optional[str] = None
+
+    def resolved_token(self) -> str:
+        return (self.expo_push_token or self.token or "").strip()
+
+class DeviceUnregisterIn(BaseModel):
+    token: Optional[str] = None
+    expo_push_token: Optional[str] = None
+
+    def resolved_token(self) -> str:
+        return (self.expo_push_token or self.token or "").strip()
+
+class NotificationPrefsIn(BaseModel):
+    messages: Optional[bool] = None
+    social: Optional[bool] = None
+    community: Optional[bool] = None
+    gigs: Optional[bool] = None
+    bands: Optional[bool] = None
+    equipment: Optional[bool] = None
+    studios: Optional[bool] = None
+    lessons: Optional[bool] = None
+    promotions: Optional[bool] = None
+    system: Optional[bool] = None
+
+class AnalyticsTrackIn(BaseModel):
+    event_name: str
+    entity_type: Optional[str] = None
+    entity_id: Optional[str] = None
+    metadata: Optional[dict] = None
+    platform: Optional[str] = None
+    device: Optional[str] = None
+    app_version: Optional[str] = None
+
 class AIBioIn(BaseModel):
     tone: str = "professional"
 
 class AIPricingIn(BaseModel):
-    city: str
+    city: str = ALLOWED_CITY
     experience_years: int
     genres: List[str]
     instruments: List[str]
 
+    @field_validator('city', mode='before')
+    @classmethod
+    def _city(cls, v): return _force_city(v)
+
 # ================== Entity Models ==================
 class BandIn(BaseModel):
     name: str
-    city: str
+    city: str = ALLOWED_CITY
     genres: List[str] = []
     description: Optional[str] = ""
     cover_url: Optional[str] = None
     looking_for: List[str] = []
 
+    @field_validator('city', mode='before')
+    @classmethod
+    def _city(cls, v): return _force_city(v)
+
+EQUIPMENT_MAX_IMAGES = 3
+STUDIO_MAX_IMAGES = 3
+
 class EquipmentIn(BaseModel):
     title: str
     listing_type: Literal['rent', 'sale']
     category: str  # guitar, mic, monitor, etc.
-    city: str
+    city: str = ALLOWED_CITY
     price: int
     description: str
     cover_url: Optional[str] = None
+    images: List[str] = Field(default_factory=list)  # up to EQUIPMENT_MAX_IMAGES
+
+    @field_validator('city', mode='before')
+    @classmethod
+    def _city(cls, v): return _force_city(v)
+
+    @field_validator('images', mode='before')
+    @classmethod
+    def _images(cls, v):
+        if v is None:
+            return []
+        if not isinstance(v, list):
+            raise ValueError('images must be a list')
+        urls = [str(x).strip() for x in v if x and str(x).strip()]
+        if len(urls) < 1:
+            raise ValueError('At least one image is required')
+        if len(urls) > EQUIPMENT_MAX_IMAGES:
+            raise ValueError(f'Max {EQUIPMENT_MAX_IMAGES} images allowed')
+        return urls
 
 class StudioIn(BaseModel):
     name: str
-    city: str
+    city: str = ALLOWED_CITY
     hourly_rate: int
     description: str
     cover_url: Optional[str] = None
+    maps_url: Optional[str] = None  # Google / Apple Maps share link
+    images: List[str] = Field(default_factory=list)  # up to STUDIO_MAX_IMAGES
+
+    @field_validator('city', mode='before')
+    @classmethod
+    def _city(cls, v): return _force_city(v)
+
+    @field_validator('maps_url', mode='before')
+    @classmethod
+    def _maps_url(cls, v):
+        if v is None:
+            return None
+        s = str(v).strip()
+        if not s:
+            return None
+        if not re.match(r'^https?://', s, re.I):
+            raise ValueError('Maps link must start with http:// or https://')
+        return s
+
+    @field_validator('images', mode='before')
+    @classmethod
+    def _images(cls, v):
+        if v is None:
+            return []
+        if not isinstance(v, list):
+            raise ValueError('images must be a list')
+        urls = [str(x).strip() for x in v if x and str(x).strip()]
+        if len(urls) < 1:
+            raise ValueError('At least one image is required')
+        if len(urls) > STUDIO_MAX_IMAGES:
+            raise ValueError(f'Max {STUDIO_MAX_IMAGES} images allowed')
+        return urls
 
 class LessonIn(BaseModel):
     title: str
     subject: str  # instrument or theory area
-    city: str
+    city: str = ALLOWED_CITY
     price_per_hour: int
     format: Literal['online', 'in-person', 'both'] = 'both'
     description: str
     cover_url: Optional[str] = None
 
+    @field_validator('city', mode='before')
+    @classmethod
+    def _city(cls, v): return _force_city(v)
+
 class PostIn(BaseModel):
     text: str
-    media_url: Optional[str] = None
-    media_type: Optional[Literal['image', 'video']] = None
+    media_url: str  # required — at least one image
+    media_type: Optional[Literal['image', 'video']] = 'image'
     visibility: Optional[Literal['public', 'followers', 'private']] = 'public'
+
+    @field_validator('media_url', mode='before')
+    @classmethod
+    def _media_url(cls, v):
+        if v is None or not str(v).strip():
+            raise ValueError('At least one image is required')
+        return str(v).strip()
+
+    @field_validator('media_type', mode='before')
+    @classmethod
+    def _media_type(cls, v):
+        if v is None or v == '':
+            return 'image'
+        if v != 'image':
+            raise ValueError('Posts require an image')
+        return v
 
 class CommentIn(BaseModel):
     post_id: str
     text: str
+    parent_id: Optional[str] = None  # reply-to comment id
+
+class NotificationTestIn(BaseModel):
+    title: Optional[str] = "gigZee test"
+    body: Optional[str] = "Push notifications are working."
 
 class PostUpdate(BaseModel):
     text: Optional[str] = None
@@ -261,8 +670,30 @@ class PostUpdate(BaseModel):
     visibility: Optional[Literal['public', 'followers', 'private']] = None
 
 # ================== Helpers ==================
+MENTION_RE = re.compile(r'@([A-Za-z0-9_]{2,32})')
+
 def now_iso():
     return datetime.now(timezone.utc).isoformat()
+
+async def _notify_mentions(text: str, actor: dict, deep_link: str, skip_ids: Optional[set] = None):
+    """Notify users mentioned as @username in text (musician profile username)."""
+    handles = set(MENTION_RE.findall(text or ''))
+    if not handles:
+        return
+    skip = set(skip_ids or set())
+    skip.add(actor.get('id'))
+    preview = (text or '').strip()
+    preview = preview[:80] + ('…' if len(preview) > 80 else '')
+    for handle in handles:
+        m = await db.musicians.find_one(
+            {'username': {'$regex': f'^{re.escape(handle)}$', '$options': 'i'}},
+            {'_id': 0, 'user_id': 1},
+        )
+        uid = (m or {}).get('user_id')
+        if not uid or uid in skip:
+            continue
+        skip.add(uid)
+        NotificationService.mention(uid, actor, preview, deep_link)
 
 def hash_pw(p: str) -> str:
     return bcrypt.hashpw(p.encode(), bcrypt.gensalt()).decode()
@@ -343,6 +774,8 @@ async def register(inp: RegisterIn):
            'onboarded': False, 'created_at': now_iso(), 'avatar_url': None,
            'verified': False, 'premium': False}
     await db.users.insert_one(doc)
+    AnalyticsService.schedule(uid, "signup", metadata={"funnel": "signup_completed"})
+    AnalyticsService.schedule(uid, "signup_completed", metadata={"funnel": True})
     return {**make_token_pair(uid), 'user': user_public(doc)}
 
 @api.post("/auth/login", response_model=TokenOut)
@@ -354,6 +787,7 @@ async def login(inp: LoginIn):
         _record_login_fail(email)
         raise HTTPException(401, "Invalid email or password")
     _clear_login_fail(email)
+    AnalyticsService.schedule(u['id'], "login")
     return {**make_token_pair(u['id']), 'user': user_public(u)}
 
 @api.post("/auth/refresh")
@@ -375,11 +809,182 @@ async def refresh(inp: RefreshIn):
 @api.post("/auth/logout")
 async def logout(u=Depends(get_user)):
     # Stateless JWT — client is responsible for discarding tokens.
+    AnalyticsService.schedule(u['id'], "logout")
     return {'ok': True}
 
 @api.get("/auth/me", response_model=UserOut)
 async def me(u=Depends(get_user)):
     return user_public(u)
+
+@api.delete("/auth/me")
+async def delete_account(u=Depends(get_user)):
+    """Permanently delete the authenticated user and cascade owned data."""
+    uid = u['id']
+
+    posts = await db.posts.find({'author_id': uid}, {'_id': 0, 'id': 1}).to_list(10000)
+    post_ids = [p['id'] for p in posts]
+    if post_ids:
+        await db.comments.delete_many({'post_id': {'$in': post_ids}})
+        await db.likes.delete_many({'post_id': {'$in': post_ids}})
+    await db.posts.delete_many({'author_id': uid})
+    await db.comments.delete_many({'author_id': uid})
+    await db.likes.delete_many({'user_id': uid})
+
+    gigs = await db.gigs.find({'organizer_id': uid}, {'_id': 0, 'id': 1}).to_list(10000)
+    gig_ids = [g['id'] for g in gigs]
+    if gig_ids:
+        await db.applications.delete_many({'gig_id': {'$in': gig_ids}})
+    await db.gigs.delete_many({'organizer_id': uid})
+    await db.applications.delete_many({'musician_id': uid})
+
+    await db.bands.delete_many({'owner_id': uid})
+    await db.equipment.delete_many({'owner_id': uid})
+    await db.studios.delete_many({'owner_id': uid})
+    await db.lessons.delete_many({'teacher_id': uid})
+
+    await db.follows.delete_many({'$or': [{'follower_id': uid}, {'target_user_id': uid}]})
+    await db.reviews.delete_many({'$or': [{'author_id': uid}, {'target_user_id': uid}]})
+    await db.messages.delete_many({'$or': [{'from_id': uid}, {'to_id': uid}]})
+
+    await db.musicians.delete_many({'user_id': uid})
+    await db.organizers.delete_many({'user_id': uid})
+    await db.device_tokens.delete_many({'user_id': uid})
+    await db.push_devices.delete_many({'user_id': uid})
+    await db.notifications.delete_many({'recipient_id': uid})
+    await db.notification_prefs.delete_many({'user_id': uid})
+    await db.users.delete_one({'id': uid})
+    return {'ok': True}
+
+@api.post("/devices/register")
+async def devices_register(inp: DeviceRegisterIn, u=Depends(get_user)):
+    tok = inp.resolved_token()
+    if not tok:
+        raise HTTPException(400, "token required")
+    try:
+        doc = await register_device(u['id'], tok, inp.platform, inp.device_name)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {'ok': True, 'device': doc}
+
+@api.post("/devices/unregister")
+async def devices_unregister(inp: DeviceUnregisterIn, u=Depends(get_user)):
+    tok = inp.resolved_token()
+    if not tok:
+        raise HTTPException(400, "token required")
+    await unregister_device(u['id'], tok)
+    return {'ok': True}
+
+@api.get("/devices")
+async def devices_list(u=Depends(get_user)):
+    """List Expo push devices registered for the authenticated user."""
+    devices = await list_push_devices(u['id'])
+    active = [d for d in devices if d.get('is_active')]
+    return {
+        'devices': devices,
+        'active_count': len(active),
+        'total_count': len(devices),
+    }
+
+# ================== Notifications (inbox + prefs) ==================
+@api.get("/notifications")
+async def notifications_list(
+    u=Depends(get_user),
+    limit: int = 30,
+    offset: int = 0,
+    unread_only: bool = False,
+):
+    return await list_inbox(u['id'], limit=limit, offset=offset, unread_only=unread_only)
+
+@api.get("/notifications/unread-count")
+async def notifications_unread(u=Depends(get_user)):
+    return {'unread': await unread_count(u['id'])}
+
+@api.post("/notifications/{nid}/read")
+async def notifications_mark_read(nid: str, u=Depends(get_user)):
+    ok = await mark_read(u['id'], nid)
+    if not ok:
+        raise HTTPException(404, "Not found")
+    return {'ok': True}
+
+@api.post("/notifications/read-all")
+async def notifications_mark_all(u=Depends(get_user)):
+    n = await mark_all_read(u['id'])
+    return {'ok': True, 'updated': n}
+
+@api.delete("/notifications/{nid}")
+async def notifications_delete(nid: str, u=Depends(get_user)):
+    ok = await delete_notification(u['id'], nid)
+    if not ok:
+        raise HTTPException(404, "Not found")
+    return {'ok': True}
+
+@api.get("/notifications/prefs")
+async def notifications_get_prefs(u=Depends(get_user)):
+    return {'prefs': await get_notification_prefs(u['id']), 'defaults': DEFAULT_PREFS}
+
+@api.put("/notifications/prefs")
+async def notifications_put_prefs(inp: NotificationPrefsIn, u=Depends(get_user)):
+    updates = {k: v for k, v in inp.dict(exclude_unset=True).items() if v is not None}
+    prefs = await set_notification_prefs(u['id'], updates)
+    return {'prefs': prefs}
+
+@api.post("/notifications/test")
+async def notifications_test(inp: NotificationTestIn = NotificationTestIn(), u=Depends(get_user)):
+    """Send a test push + inbox notification to the authenticated user's devices."""
+    title = (inp.title or "gigZee test").strip() or "gigZee test"
+    body = (inp.body or "Push notifications are working.").strip() or "Push notifications are working."
+    saved = await NotificationService.send(
+        u['id'],
+        "system.test",
+        title,
+        body,
+        deep_link="/notifications",
+        meta={"source": "test_endpoint"},
+        push=False,  # we send push with diagnostics below
+        inbox=True,
+    )
+    push = await deliver_push_detailed(
+        u['id'],
+        title,
+        body,
+        data={
+            "type": "system.test",
+            "path": "/notifications",
+            "notification_id": (saved or {}).get("id"),
+            "source": "test_endpoint",
+        },
+    )
+    return {
+        'ok': bool(push.get('sent')),
+        'notification': saved,
+        'push': push,
+        'message': (
+            f"Push accepted for {push.get('sent', 0)} device(s)."
+            if push.get('sent')
+            else (push.get('error') or 'Push not delivered. Check push.tickets / push.receipts.')
+        ),
+    }
+
+# ================== Analytics ==================
+@api.post("/analytics/track")
+async def analytics_track(inp: AnalyticsTrackIn, request: Request, u=Depends(get_user)):
+    """Client-side event ingest — never blocks; fire-and-forget."""
+    ip = request.client.host if request.client else None
+    AnalyticsService.schedule(
+        u['id'], inp.event_name,
+        entity_type=inp.entity_type, entity_id=inp.entity_id,
+        metadata=inp.metadata, platform=inp.platform, device=inp.device,
+        app_version=inp.app_version, ip_address=ip,
+    )
+    return {'ok': True}
+
+@api.get("/admin/analytics")
+async def admin_analytics(days: int = 30, u=Depends(get_user)):
+    if ADMIN_USER_IDS and u['id'] not in ADMIN_USER_IDS:
+        raise HTTPException(403, "Admin only")
+    # If ADMIN_USER_IDS unset, allow any authenticated user in early access
+    # (set ADMIN_USER_IDS in Railway for production lockdown)
+    return await admin_overview(days=max(1, min(days, 90)))
 
 @api.post("/auth/roles", response_model=UserOut)
 async def set_roles(inp: RolesIn, u=Depends(get_user)):
@@ -415,11 +1020,18 @@ async def upsert_musician(inp: MusicianProfileIn, u=Depends(get_user)):
     updates = {'onboarded': True}
     if inp.avatar_url: updates['avatar_url'] = inp.avatar_url
     await db.users.update_one({'id': u['id']}, {'$set': updates})
+    AnalyticsService.schedule(u['id'], "profile_completed", metadata={"funnel": True})
     return {'ok': True}
 
 @api.patch("/profile/musician")
 async def patch_musician(inp: ProfilePatchIn, u=Depends(get_user)):
-    updates = {k: v for k, v in inp.dict(exclude_unset=True).items() if v is not None}
+    raw = inp.dict(exclude_unset=True)
+    # Allow clearing optional contact fields with null/empty after normalization
+    clearable = {'phone'}
+    updates = {
+        k: v for k, v in raw.items()
+        if v is not None or k in clearable
+    }
     if not updates:
         return {'ok': True, 'updated': 0}
     updates['updated_at'] = now_iso()
@@ -432,26 +1044,53 @@ async def patch_musician(inp: ProfilePatchIn, u=Depends(get_user)):
 
 @api.post("/profile/portfolio")
 async def add_portfolio_item(inp: PortfolioItemIn, u=Depends(get_user)):
-    item = inp.dict()
-    item['id'] = str(uuid.uuid4())
-    item['created_at'] = now_iso()
-    await db.musicians.update_one(
-        {'user_id': u['id']},
-        {'$push': {'portfolio_items': item}, '$set': {'updated_at': now_iso()}},
-        upsert=True,
-    )
+    # Merge across any duplicate musician rows so the new link is visible
+    # on both /profile/musician/{id} and unified /profile/{id}.
+    docs = await db.musicians.find({'user_id': u['id']}, {'_id': 0}).to_list(50)
+    items = _normalize_portfolio_items(_merge_list_by_id([d.get('portfolio_items') for d in docs]))
+    if len(items) >= PORTFOLIO_MAX_LINKS:
+        raise HTTPException(400, f"Portfolio limit reached: max {PORTFOLIO_MAX_LINKS} links")
+
+    raw = inp.model_dump() if hasattr(inp, "model_dump") else inp.dict()
+    item = {
+        "id": str(uuid.uuid4()),
+        "title": (raw.get("title") or "Portfolio link").strip() or "Portfolio link",
+        "description": raw.get("description") or "",
+        "category": raw.get("category") or "Performance",
+        "media_url": raw.get("media_url"),
+        "media_type": "link",
+        "thumbnail_url": raw.get("thumbnail_url"),
+        "tags": raw.get("tags") or [],
+        "date": raw.get("date"),
+        "created_at": now_iso(),
+    }
+    items.append(item)
+
+    payload = {"portfolio_items": items, "updated_at": now_iso(), "user_id": u["id"]}
+    if docs:
+        await db.musicians.update_many(
+            {"user_id": u["id"]},
+            {"$set": payload},
+        )
+    else:
+        await db.musicians.update_one(
+            {"user_id": u["id"]},
+            {"$set": payload},
+            upsert=True,
+        )
     return item
 
 @api.delete("/profile/portfolio/{item_id}")
 async def delete_portfolio_item(item_id: str, u=Depends(get_user)):
-    before = await db.musicians.find_one({'user_id': u['id']}, {'portfolio_items': 1}) or {}
-    r = await db.musicians.update_one(
-        {'user_id': u['id']},
-        {'$pull': {'portfolio_items': {'id': item_id}}, '$set': {'updated_at': now_iso()}},
-    )
-    after = await db.musicians.find_one({'user_id': u['id']}, {'portfolio_items': 1}) or {}
-    deleted = len(before.get('portfolio_items') or []) - len(after.get('portfolio_items') or [])
-    return {'deleted': max(deleted, 0)}
+    docs = await db.musicians.find({'user_id': u['id']}, {'_id': 0}).to_list(50)
+    before = _normalize_portfolio_items(_merge_list_by_id([d.get('portfolio_items') for d in docs]))
+    after = [it for it in before if it.get('id') != item_id]
+    if docs:
+        await db.musicians.update_many(
+            {'user_id': u['id']},
+            {'$set': {'portfolio_items': after, 'updated_at': now_iso()}},
+        )
+    return {'deleted': max(len(before) - len(after), 0)}
 
 @api.post("/profile/services")
 async def add_service(inp: ServiceIn, u=Depends(get_user)):
@@ -485,9 +1124,9 @@ def _compute_completion(m: dict) -> dict:
         ('genres', 'Choose your genres', 10),
         ('instruments', 'List your instruments', 10),
         ('professions', 'Add your professions', 10),
-        ('pricing_per_hour', 'Set your hourly rate', 10),
+        ('pricing_per_hour', 'Set your base rate', 10),
         ('experience_years', 'Add years of experience', 5),
-        ('portfolio_items', 'Upload portfolio items', 10),
+        ('portfolio_items', 'Add portfolio links (Drive, etc.)', 10),
         ('services', 'List services you offer', 5),
         ('youtube_url', 'Link your YouTube', 3),
         ('instagram_url', 'Link your Instagram', 2),
@@ -523,16 +1162,18 @@ async def upsert_organizer(inp: OrganizerProfileIn, u=Depends(get_user)):
     return {'ok': True}
 
 @api.get("/profile/musician/{user_id}")
-async def get_musician(user_id: str):
-    m = await db.musicians.find_one({'user_id': user_id}, {'_id': 0})
+async def get_musician(user_id: str, request: Request):
+    m = await _load_musician(user_id)
     if not m: raise HTTPException(404, "Not found")
     u = await db.users.find_one({'id': user_id}, {'_id': 0, 'password_hash': 0})
+    viewer = await _optional_user(request)
+    is_self = bool(viewer and viewer['id'] == user_id)
     reviews = await db.reviews.find({'target_user_id': user_id}, {'_id': 0}).to_list(50)
     rating = round(sum(r['rating'] for r in reviews) / len(reviews), 1) if reviews else 0
     reliability = min(100, 60 + len(reviews) * 4)
     followers = await db.follows.count_documents({'target_user_id': user_id})
     following = await db.follows.count_documents({'follower_id': user_id})
-    return {'user': user_public(u) if u else None, 'profile': m, 'rating': rating,
+    return {'user': user_public(u) if u else None, 'profile': _public_profile(m, is_self), 'rating': rating,
             'review_count': len(reviews), 'reliability': reliability, 'followers': followers,
             'following': following, 'reviews': reviews[:10]}
 
@@ -568,10 +1209,17 @@ async def get_unified_profile(user_id: str, request: Request):
     achievements (derived), community_activity, permissions, viewer_relationship.
     The frontend renders identical layout and picks actions based on
     `permissions`; it should never branch on "own vs public"."""
-    m = await db.musicians.find_one({'user_id': user_id}, {'_id': 0})
+    m = await _load_musician(user_id)
     if not m: raise HTTPException(404, "Profile not found")
     u = await db.users.find_one({'id': user_id}, {'_id': 0, 'password_hash': 0})
     if not u: raise HTTPException(404, "User not found")
+    # Heal avatar desync: edit historically wrote avatar to musicians first.
+    if not (u.get('avatar_url') or '').strip() and (m.get('avatar_url') or '').strip():
+        u = {**u, 'avatar_url': m['avatar_url']}
+        try:
+            await db.users.update_one({'id': user_id}, {'$set': {'avatar_url': m['avatar_url']}})
+        except Exception:
+            pass
     viewer = await _optional_user(request)
     is_self = bool(viewer and viewer['id'] == user_id)
 
@@ -595,8 +1243,11 @@ async def get_unified_profile(user_id: str, request: Request):
         post_filter = {'author_id': user_id, '$or': [
             {'visibility': 'public'}, {'visibility': {'$exists': False}}
         ]}
+    posts_total = await db.posts.count_documents(post_filter)
     entities = {
-        'posts': await db.posts.find(post_filter, {'_id': 0}).sort('created_at', -1).to_list(50),
+        # Profile only needs a compact preview — full list is GET /users/{id}/posts
+        'posts': await db.posts.find(post_filter, {'_id': 0}).sort('created_at', -1).limit(9).to_list(9),
+        'posts_total': posts_total,
         'gigs': await db.gigs.find({'organizer_id': user_id}, {'_id': 0}).sort('date', -1).to_list(50),
         'bands': await db.bands.find({'owner_id': user_id}, {'_id': 0}).to_list(50),
         'equipment': await db.equipment.find({'owner_id': user_id}, {'_id': 0}).to_list(50),
@@ -616,18 +1267,19 @@ async def get_unified_profile(user_id: str, request: Request):
                 rev['author_avatar'] = au.get('avatar_url')
         reviews.append(rev)
 
-    # Upcoming events: for organizers, future own gigs; for musicians, gigs where
-    # they have an accepted application in the future.
+    # Upcoming events: future gigs that are still active (open or filled).
+    # Cancelled gigs are excluded so they don't linger on profiles.
     today = now_str[:10]
+    active_statuses = {'$in': ['open', 'filled']}
     org_upcoming = await db.gigs.find({
-        'organizer_id': user_id, 'date': {'$gte': today}
+        'organizer_id': user_id, 'date': {'$gte': today}, 'status': active_statuses,
     }, {'_id': 0}).sort('date', 1).limit(5).to_list(5)
     mus_apps = await db.applications.find({
         'musician_id': user_id, 'status': 'accepted'
     }, {'_id': 0}).to_list(50)
     mus_gig_ids = [a['gig_id'] for a in mus_apps]
     mus_upcoming = await db.gigs.find({
-        'id': {'$in': mus_gig_ids}, 'date': {'$gte': today}
+        'id': {'$in': mus_gig_ids}, 'date': {'$gte': today}, 'status': active_statuses,
     }, {'_id': 0}).sort('date', 1).limit(5).to_list(5) if mus_gig_ids else []
     upcoming_events = sorted(org_upcoming + mus_upcoming, key=lambda g: g.get('date', ''))[:6]
 
@@ -643,11 +1295,19 @@ async def get_unified_profile(user_id: str, request: Request):
     if m.get('experience_years', 0) >= 5:
         achievements.append({'key': 'veteran', 'label': f'{m["experience_years"]}+ yrs experience', 'icon': 'trophy'})
 
-    # Community activity — lightweight counts for the section
+    # Community activity — posts + engagement on this user's content
+    # (likes/comments received), plus outbound likes/comments given.
+    user_post_ids = [p['id'] for p in await db.posts.find(
+        {'author_id': user_id}, {'_id': 0, 'id': 1}
+    ).to_list(5000)]
+    likes_received = await db.likes.count_documents({'post_id': {'$in': user_post_ids}}) if user_post_ids else 0
+    comments_received = await db.comments.count_documents({'post_id': {'$in': user_post_ids}}) if user_post_ids else 0
     likes_given = await db.likes.count_documents({'user_id': user_id})
     comments_given = await db.comments.count_documents({'author_id': user_id})
     community_activity = {
-        'posts_count': len(entities['posts']),
+        'posts_count': posts_total,
+        'likes_received': likes_received,
+        'comments_received': comments_received,
         'likes_given': likes_given,
         'comments_given': comments_given,
     }
@@ -680,7 +1340,7 @@ async def get_unified_profile(user_id: str, request: Request):
 
     return {
         'user': user_public(u),
-        'profile': m,
+        'profile': _public_profile(m, is_self),
         'stats': {
             'followers': followers, 'following': following,
             'completed_gigs': completed_gigs,
@@ -701,8 +1361,7 @@ async def get_unified_profile(user_id: str, request: Request):
 async def list_musicians(city: Optional[str] = None, genre: Optional[str] = None,
                          instrument: Optional[str] = None, q: Optional[str] = None,
                          featured: Optional[bool] = None, limit: int = 50):
-    query = {}
-    if city and city != 'All': query['city'] = {'$regex': f'^{city}$', '$options': 'i'}
+    query = {**_city_query(city)}
     if genre and genre != 'All': query['genres'] = {'$in': [genre]}
     if instrument and instrument != 'All': query['instruments'] = {'$in': [instrument]}
     docs = await db.musicians.find(query, {'_id': 0}).limit(limit).to_list(limit)
@@ -710,9 +1369,19 @@ async def list_musicians(city: Optional[str] = None, genre: Optional[str] = None
     for m in docs:
         u = await db.users.find_one({'id': m['user_id']}, {'_id': 0, 'password_hash': 0})
         if not u: continue
-        if q and q.lower() not in (u['full_name'] + ' ' + ' '.join(m.get('genres', []))).lower():
-            continue
-        out.append({'user': user_public(u), 'profile': m})
+        if q:
+            blob = ' '.join([
+                u.get('full_name') or '',
+                ' '.join(m.get('genres') or []),
+                ' '.join(m.get('instruments') or []),
+                ' '.join(m.get('skills') or []),
+                ' '.join(m.get('professions') or []),
+                m.get('tagline') or '',
+                m.get('bio') or '',
+            ]).lower()
+            if q.lower() not in blob:
+                continue
+        out.append({'user': user_public(u), 'profile': _public_profile(m, is_self=False)})
     return out
 
 @api.get("/organizers")
@@ -728,10 +1397,13 @@ async def list_organizers(q: Optional[str] = None, limit: int = 50):
 
 @api.get("/venues")
 async def list_venues(city: Optional[str] = None, q: Optional[str] = None, limit: int = 50):
-    query = {}
-    if city and city != 'All': query['city'] = {'$regex': city, '$options': 'i'}
+    query = {**_city_query(city)}
     if q: query['name'] = {'$regex': q, '$options': 'i'}
     return await db.venues.find(query, {'_id': 0}).limit(limit).to_list(limit)
+
+@api.get("/venues/{vid}")
+async def get_venue(vid: str):
+    return await _get_entity_detail(db.venues, vid, owner_key='owner_id', cover_kind='venue')
 
 # ================== Gigs ==================
 @api.post("/gigs")
@@ -739,10 +1411,13 @@ async def create_gig(inp: GigCreate, u=Depends(get_user)):
     # Action-based: any user can post a hiring gig
     gid = str(uuid.uuid4())
     doc = inp.dict()
+    doc['cover_url'] = _default_cover('gig', doc.get('cover_url'))
     doc.update({'id': gid, 'organizer_id': u['id'], 'status': 'open',
                 'created_at': now_iso(), 'featured': False})
     await db.gigs.insert_one(doc)
     doc.pop('_id', None)
+    AnalyticsService.schedule(u['id'], "gig_created", entity_type="gig", entity_id=gid)
+    AnalyticsService.schedule(u['id'], "first_gig", entity_type="gig", entity_id=gid, metadata={"funnel": True})
     return doc
 
 @api.get("/gigs")
@@ -750,16 +1425,21 @@ async def list_gigs(city: Optional[str] = None, genre: Optional[str] = None,
                     instrument: Optional[str] = None, event_type: Optional[str] = None,
                     min_budget: Optional[int] = None, max_budget: Optional[int] = None,
                     q: Optional[str] = None, limit: int = 100):
-    query = {'status': 'open'}
-    if city and city != 'All': query['city'] = {'$regex': city, '$options': 'i'}
+    query = {'status': 'open', **_city_query(city)}
     if genre and genre != 'All': query['genre'] = genre
     if instrument and instrument != 'All': query['instrument_needed'] = instrument
     if event_type and event_type != 'All': query['event_type'] = event_type
     if min_budget is not None: query['budget'] = {'$gte': min_budget}
     if max_budget is not None: query.setdefault('budget', {})['$lte'] = max_budget
     if q:
-        query['$or'] = [{'title': {'$regex': q, '$options': 'i'}},
-                        {'description': {'$regex': q, '$options': 'i'}}]
+        rx = {'$regex': q, '$options': 'i'}
+        query['$or'] = [
+            {'title': rx},
+            {'description': rx},
+            {'instrument_needed': rx},
+            {'genre': rx},
+            {'event_type': rx},
+        ]
     return await db.gigs.find(query, {'_id': 0}).sort('featured', -1).limit(limit).to_list(limit)
 
 @api.get("/gigs/{gid}")
@@ -769,8 +1449,22 @@ async def get_gig(gid: str):
     org_user = await db.users.find_one({'id': g['organizer_id']}, {'_id': 0, 'password_hash': 0})
     org_profile = await db.organizers.find_one({'user_id': g['organizer_id']}, {'_id': 0})
     apps_count = await db.applications.count_documents({'gig_id': gid})
-    return {'gig': g, 'organizer_user': user_public(org_user) if org_user else None,
-            'organizer_profile': org_profile, 'applications_count': apps_count}
+    contact = await _owner_contact(g.get('organizer_id'))
+    accepted = None
+    mid = g.get('accepted_musician_id')
+    if mid:
+        mu = await db.users.find_one({'id': mid}, {'_id': 0, 'password_hash': 0})
+        mp = await db.musicians.find_one({'user_id': mid}, {'_id': 0})
+        if mu:
+            accepted = {'user': user_public(mu), 'profile': mp}
+    return {
+        'gig': g,
+        'organizer_user': user_public(org_user) if org_user else None,
+        'organizer_profile': org_profile,
+        'applications_count': apps_count,
+        'contact': contact,
+        'accepted_collaborator': accepted,
+    }
 
 @api.get("/gigs/mine/list")
 async def my_gigs(u=Depends(get_user)):
@@ -785,13 +1479,36 @@ async def apply(inp: ApplicationIn, u=Depends(get_user)):
     # Action-based: any user can apply
     g = await db.gigs.find_one({'id': inp.gig_id})
     if not g: raise HTTPException(404, "Gig not found")
-    if await db.applications.find_one({'gig_id': inp.gig_id, 'musician_id': u['id']}):
+    if g.get('status') != 'open':
+        raise HTTPException(400, "This gig is no longer open for collaboration")
+    if g.get('organizer_id') == u['id']:
+        raise HTTPException(400, "Cannot apply to your own gig")
+    existing = await db.applications.find_one(
+        {'gig_id': inp.gig_id, 'musician_id': u['id']}, {'_id': 0}
+    )
+    if existing:
+        # Allow re-request after withdraw / decline when gig is open again
+        if existing.get('status') in ('withdrawn', 'rejected'):
+            ts = now_iso()
+            await db.applications.update_one(
+                {'id': existing['id']},
+                {'$set': {
+                    'status': 'pending',
+                    'message': inp.message,
+                    'updated_at': ts,
+                }},
+            )
+            NotificationService.gig_application(g['organizer_id'], u, g)
+            AnalyticsService.schedule(u['id'], "gig_applied", entity_type="gig", entity_id=g['id'])
+            return await db.applications.find_one({'id': existing['id']}, {'_id': 0})
         raise HTTPException(400, "Already applied")
     aid = str(uuid.uuid4())
     doc = {'id': aid, 'gig_id': inp.gig_id, 'musician_id': u['id'],
            'message': inp.message, 'status': 'pending', 'created_at': now_iso()}
     await db.applications.insert_one(doc)
     doc.pop('_id', None)
+    NotificationService.gig_application(g['organizer_id'], u, g)
+    AnalyticsService.schedule(u['id'], "gig_applied", entity_type="gig", entity_id=g['id'])
     return doc
 
 @api.get("/applications/mine")
@@ -808,13 +1525,143 @@ async def gig_apps(gid: str, u=Depends(get_user)):
     g = await db.gigs.find_one({'id': gid})
     if not g or g['organizer_id'] != u['id']:
         raise HTTPException(403, "Not allowed")
-    apps = await db.applications.find({'gig_id': gid}, {'_id': 0}).to_list(200)
+    apps = await db.applications.find({'gig_id': gid}, {'_id': 0}).sort('created_at', -1).to_list(200)
     out = []
     for a in apps:
         mu = await db.users.find_one({'id': a['musician_id']}, {'_id': 0, 'password_hash': 0})
         mp = await db.musicians.find_one({'user_id': a['musician_id']}, {'_id': 0})
         out.append({'application': a, 'musician_user': user_public(mu) if mu else None, 'musician_profile': mp})
     return out
+
+@api.post("/applications/{aid}/accept")
+async def accept_application(aid: str, u=Depends(get_user)):
+    """Accept one collaborator: fill the gig and reject all other pending requests."""
+    app = await db.applications.find_one({'id': aid}, {'_id': 0})
+    if not app: raise HTTPException(404, "Application not found")
+    g = await db.gigs.find_one({'id': app['gig_id']}, {'_id': 0})
+    if not g: raise HTTPException(404, "Gig not found")
+    if g['organizer_id'] != u['id']:
+        raise HTTPException(403, "Not allowed")
+    if g.get('status') != 'open':
+        raise HTTPException(400, "Gig is already filled")
+    if app.get('status') != 'pending':
+        raise HTTPException(400, "Application is not pending")
+
+    ts = now_iso()
+    await db.applications.update_one({'id': aid}, {'$set': {'status': 'accepted', 'updated_at': ts}})
+    await db.applications.update_many(
+        {'gig_id': g['id'], 'id': {'$ne': aid}, 'status': 'pending'},
+        {'$set': {'status': 'rejected', 'updated_at': ts}},
+    )
+    await db.gigs.update_one(
+        {'id': g['id']},
+        {'$set': {
+            'status': 'filled',
+            'filled_at': ts,
+            'accepted_application_id': aid,
+            'accepted_musician_id': app['musician_id'],
+        }},
+    )
+    updated = await db.applications.find_one({'id': aid}, {'_id': 0})
+    gig = await db.gigs.find_one({'id': g['id']}, {'_id': 0})
+    NotificationService.gig_accepted(app['musician_id'], u, g)
+    AnalyticsService.schedule(u['id'], "gig_accepted", entity_type="gig", entity_id=g['id'],
+                              metadata={'musician_id': app['musician_id']})
+    return {'application': updated, 'gig': gig}
+
+@api.post("/applications/{aid}/reject")
+async def reject_application(aid: str, u=Depends(get_user)):
+    """Reject a single collaboration request without filling the gig."""
+    app = await db.applications.find_one({'id': aid}, {'_id': 0})
+    if not app: raise HTTPException(404, "Application not found")
+    g = await db.gigs.find_one({'id': app['gig_id']}, {'_id': 0})
+    if not g: raise HTTPException(404, "Gig not found")
+    if g['organizer_id'] != u['id']:
+        raise HTTPException(403, "Not allowed")
+    if app.get('status') != 'pending':
+        raise HTTPException(400, "Application is not pending")
+    await db.applications.update_one(
+        {'id': aid},
+        {'$set': {'status': 'rejected', 'updated_at': now_iso()}},
+    )
+    updated = await db.applications.find_one({'id': aid}, {'_id': 0})
+    NotificationService.gig_rejected(app['musician_id'], u, g)
+    return {'application': updated}
+
+@api.post("/applications/{aid}/revoke")
+async def revoke_application(aid: str, u=Depends(get_user)):
+    """Organizer or accepted collaborator ends the collaboration and reopens the gig."""
+    app = await db.applications.find_one({'id': aid}, {'_id': 0})
+    if not app: raise HTTPException(404, "Application not found")
+    g = await db.gigs.find_one({'id': app['gig_id']}, {'_id': 0})
+    if not g: raise HTTPException(404, "Gig not found")
+    if app.get('status') != 'accepted':
+        raise HTTPException(400, "Only an accepted collaboration can be revoked")
+    if g.get('status') == 'cancelled':
+        raise HTTPException(400, "This gig was cancelled")
+    is_org = g.get('organizer_id') == u['id']
+    is_collab = app.get('musician_id') == u['id']
+    if not (is_org or is_collab):
+        raise HTTPException(403, "Not allowed")
+
+    ts = now_iso()
+    await db.applications.update_one(
+        {'id': aid},
+        {'$set': {
+            'status': 'withdrawn',
+            'updated_at': ts,
+            'revoked_by': u['id'],
+            'revoked_at': ts,
+        }},
+    )
+    await db.gigs.update_one(
+        {'id': g['id']},
+        {
+            '$set': {'status': 'open', 'updated_at': ts},
+            '$unset': {
+                'filled_at': '',
+                'accepted_application_id': '',
+                'accepted_musician_id': '',
+            },
+        },
+    )
+    updated = await db.applications.find_one({'id': aid}, {'_id': 0})
+    gig = await db.gigs.find_one({'id': g['id']}, {'_id': 0})
+    return {'application': updated, 'gig': gig}
+
+@api.post("/gigs/{gid}/cancel")
+async def cancel_gig(gid: str, u=Depends(get_user)):
+    """Organizer cancels a gig. Removes it from upcoming profiles and discover."""
+    g = await db.gigs.find_one({'id': gid}, {'_id': 0})
+    if not g: raise HTTPException(404, "Not found")
+    if g.get('organizer_id') != u['id']:
+        raise HTTPException(403, "Only the organizer can cancel this gig")
+    if g.get('status') == 'cancelled':
+        return g
+    ts = now_iso()
+    await db.gigs.update_one(
+        {'id': gid},
+        {'$set': {
+            'status': 'cancelled',
+            'cancelled_at': ts,
+            'updated_at': ts,
+        }},
+    )
+    # Close out pending requests; leave accepted as historical record
+    await db.applications.update_many(
+        {'gig_id': gid, 'status': 'pending'},
+        {'$set': {'status': 'rejected', 'updated_at': ts, 'reject_reason': 'gig_cancelled'}},
+    )
+    # Notify accepted collaborator if any
+    mid = g.get('accepted_musician_id')
+    if mid:
+        NotificationService.gig_cancelled(mid, u, g)
+    apps = await db.applications.find({'gig_id': gid, 'status': 'accepted'}, {'_id': 0}).to_list(20)
+    for a in apps:
+        if a.get('musician_id') and a['musician_id'] != mid:
+            NotificationService.gig_cancelled(a['musician_id'], u, g)
+    AnalyticsService.schedule(u['id'], "gig_cancelled", entity_type="gig", entity_id=gid)
+    return await db.gigs.find_one({'id': gid}, {'_id': 0})
 
 # ================== Reviews ==================
 @api.post("/reviews")
@@ -865,6 +1712,9 @@ async def send_msg(inp: MessageIn, u=Depends(get_user)):
          'text': inp.text.strip(), 'read': False, 'created_at': now_iso()}
     await db.messages.insert_one(m)
     m.pop('_id', None)
+    preview = (inp.text.strip()[:80] + ("…" if len(inp.text.strip()) > 80 else ""))
+    NotificationService.new_message(inp.to_user_id, u, preview)
+    AnalyticsService.schedule(u['id'], "message_sent", entity_type="user", entity_id=inp.to_user_id)
     return m
 
 # ================== AI ==================
@@ -924,7 +1774,12 @@ async def ai_recos(u=Depends(get_user)):
         if g['city'].lower() == (m.get('city') or '').lower(): score += 2
         scored.append((score, g))
     scored.sort(key=lambda x: -x[0])
-    return [g for _, g in scored[:5]]
+    out = []
+    for _, g in scored[:5]:
+        g = dict(g)
+        g['cover_url'] = _default_cover('gig', g.get('cover_url'))
+        out.append(g)
+    return out
 
 @api.post("/ai/contract/{gig_id}")
 async def ai_contract(gig_id: str, u=Depends(get_user)):
@@ -964,7 +1819,7 @@ async def home(u=Depends(get_user)):
         featured_musicians = []
         for m in top:
             ux = await db.users.find_one({'id': m['user_id']}, {'_id': 0, 'password_hash': 0})
-            if ux: featured_musicians.append({'user': user_public(ux), 'profile': m})
+            if ux: featured_musicians.append({'user': user_public(ux), 'profile': _public_profile(m, is_self=False)})
         return {
             'role': 'organizer',
             'metrics': {'active_gigs': len([g for g in my_gigs_ if g['status'] == 'open']),
@@ -1027,262 +1882,188 @@ async def dashboard(u=Depends(get_user)):
             'accepted': len([a for a in apps if a['status'] == 'accepted']),
             'rating': rating, 'reviews': len(reviews)}
 
-# ================== Seed ==================
-@api.post("/seed")
-async def seed():
-    if await db.users.count_documents({}) > 3:
-        # ensure venues exist
-        if await db.venues.count_documents({}) == 0:
-            await seed_venues()
-        return {'seeded': False, 'reason': 'Already seeded'}
-    await do_seed()
-    return {'seeded': True}
-
-async def seed_venues():
-    venues = [
-        {'id': str(uuid.uuid4()), 'name': 'The Blue Frog', 'city': 'Mumbai', 'type': 'Club',
-         'cover_url': 'https://images.unsplash.com/photo-1493225255756-d9584f8606e9?w=800',
-         'capacity': 300, 'rating': 4.7},
-        {'id': str(uuid.uuid4()), 'name': 'Fandom @ Gilly\'s', 'city': 'Bengaluru', 'type': 'Club',
-         'cover_url': 'https://images.unsplash.com/photo-1571266028243-e4bb35f01e9d?w=800',
-         'capacity': 500, 'rating': 4.6},
-        {'id': str(uuid.uuid4()), 'name': 'Hard Rock Cafe', 'city': 'Delhi', 'type': 'Lounge',
-         'cover_url': 'https://images.unsplash.com/photo-1470229722913-7c0e2dbbafd3?w=800',
-         'capacity': 250, 'rating': 4.5},
-        {'id': str(uuid.uuid4()), 'name': 'antiSocial', 'city': 'Mumbai', 'type': 'Underground',
-         'cover_url': 'https://images.unsplash.com/photo-1429962714451-bb934ecdc4ec?w=800',
-         'capacity': 200, 'rating': 4.8},
-    ]
-    await db.venues.insert_many(venues)
-
-async def do_seed():
-    orgs = [
-        {'email': 'sunset@stagelink.dev', 'full_name': 'Sunset Sound Co', 'org': 'Sunset Sound Co', 'city': 'Mumbai'},
-        {'email': 'nova@stagelink.dev', 'full_name': 'Nova Events', 'org': 'Nova Events', 'city': 'Bengaluru'},
-        {'email': 'ember@stagelink.dev', 'full_name': 'Ember Weddings', 'org': 'Ember Weddings', 'city': 'Delhi'},
-    ]
-    org_ids = []
-    for o in orgs:
-        uid = str(uuid.uuid4())
-        await db.users.insert_one({'id': uid, 'email': o['email'], 'full_name': o['full_name'],
-                                   'password_hash': hash_pw('demo1234'), 'roles': ['organizer', 'musician'],
-                                   'active_role': 'organizer', 'onboarded': True,
-                                   'verified': True, 'premium': False,
-                                   'avatar_url': None, 'created_at': now_iso()})
-        await db.organizers.insert_one({'user_id': uid, 'org_name': o['org'], 'city': o['city'],
-                                        'bio': f"Premium event partners in {o['city']}.", 'updated_at': now_iso()})
-        org_ids.append(uid)
-
-    musicians = [
-        {'name': 'Ariya Kapoor', 'city': 'Mumbai', 'genres': ['Jazz', 'Soul'], 'instruments': ['Vocals'], 'exp': 8, 'price': 6000,
-         'avatar': 'https://images.unsplash.com/photo-1516280440614-37939bbacd81?w=400',
-         'cover': 'https://images.unsplash.com/photo-1415201364774-f6f0bb35f28f?w=1200'},
-        {'name': 'Kabir Rao', 'city': 'Bengaluru', 'genres': ['Indie', 'Rock'], 'instruments': ['Guitar'], 'exp': 5, 'price': 4500,
-         'avatar': 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=400',
-         'cover': 'https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=1200'},
-        {'name': 'Naina Iyer', 'city': 'Delhi', 'genres': ['Classical', 'Fusion'], 'instruments': ['Violin'], 'exp': 12, 'price': 8500,
-         'avatar': 'https://images.unsplash.com/photo-1509228468518-180dd4864904?w=400',
-         'cover': 'https://images.unsplash.com/photo-1533174072545-7a4b6ad7a6c3?w=1200'},
-        {'name': 'Rohan Menon', 'city': 'Mumbai', 'genres': ['EDM', 'House'], 'instruments': ['DJ Deck'], 'exp': 6, 'price': 12000,
-         'avatar': 'https://images.unsplash.com/photo-1493225255756-d9584f8606e9?w=400',
-         'cover': 'https://images.unsplash.com/photo-1571266028243-e4bb35f01e9d?w=1200'},
-        {'name': 'Priya Verma', 'city': 'Bengaluru', 'genres': ['Pop', 'R&B'], 'instruments': ['Vocals', 'Keyboard'], 'exp': 4, 'price': 5500,
-         'avatar': 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=400',
-         'cover': 'https://images.unsplash.com/photo-1429962714451-bb934ecdc4ec?w=1200'},
-        {'name': 'Dev Sharma', 'city': 'Delhi', 'genres': ['Rock', 'Metal'], 'instruments': ['Drums'], 'exp': 9, 'price': 7000,
-         'avatar': 'https://images.unsplash.com/photo-1520785643438-5bf77931f493?w=400',
-         'cover': 'https://images.unsplash.com/photo-1470229722913-7c0e2dbbafd3?w=1200'},
-    ]
-    musician_ids = []
-    for i, m in enumerate(musicians):
-        uid = str(uuid.uuid4())
-        musician_ids.append(uid)
-        await db.users.insert_one({'id': uid, 'email': m['name'].lower().replace(' ', '.') + '@stagelink.dev',
-                                   'full_name': m['name'], 'password_hash': hash_pw('demo1234'),
-                                   'roles': ['musician', 'organizer'],
-                                   'active_role': 'musician', 'onboarded': True,
-                                   'verified': i < 3, 'premium': i < 2,
-                                   'avatar_url': m['avatar'], 'created_at': now_iso()})
-        await db.musicians.insert_one({'user_id': uid,
-                                       'bio': f"{m['name']} — {'/'.join(m['genres'])} artist based in {m['city']}. "
-                                              f"Bringing high-energy live sets crafted for unforgettable nights.",
-                                       'city': m['city'], 'genres': m['genres'], 'instruments': m['instruments'],
-                                       'languages': ['English', 'Hindi'], 'experience_years': m['exp'],
-                                       'pricing_per_hour': m['price'], 'demo_video_url': None,
-                                       'youtube_url': f"https://youtube.com/@{m['name'].lower().replace(' ','')}",
-                                       'instagram_url': f"https://instagram.com/{m['name'].lower().replace(' ','')}",
-                                       'avatar_url': m['avatar'], 'cover_url': m['cover'],
-                                       'updated_at': now_iso()})
-        await db.reviews.insert_one({'id': str(uuid.uuid4()), 'author_id': org_ids[i % 3],
-                                     'target_user_id': uid, 'rating': 5,
-                                     'author_name': 'Sunset Sound Co',
-                                     'comment': 'Absolute pro. On-time, prepared, and phenomenal on stage.',
-                                     'created_at': now_iso()})
-
-    gigs = [
-        {'title': 'Rooftop Jazz Night', 'city': 'Mumbai', 'event_type': 'club', 'genre': 'Jazz',
-         'instrument_needed': 'Vocals', 'budget': 15000,
-         'description': 'Sophisticated 3-hour rooftop set for our monthly jazz series.',
-         'cover_url': 'https://images.unsplash.com/photo-1415201364774-f6f0bb35f28f?w=800'},
-        {'title': 'Beachside Wedding Reception', 'city': 'Mumbai', 'event_type': 'wedding', 'genre': 'Pop',
-         'instrument_needed': 'Vocals', 'budget': 45000,
-         'description': 'Live acoustic set during cocktail hour + reception.',
-         'cover_url': 'https://images.unsplash.com/photo-1519741497674-611481863552?w=800'},
-        {'title': 'Corporate Off-site — Indie Set', 'city': 'Bengaluru', 'event_type': 'corporate', 'genre': 'Indie',
-         'instrument_needed': 'Guitar', 'budget': 22000,
-         'description': 'Chill 90-minute indie set for a tech company off-site.',
-         'cover_url': 'https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=800'},
-        {'title': 'Diwali Fusion Concert', 'city': 'Delhi', 'event_type': 'festival', 'genre': 'Fusion',
-         'instrument_needed': 'Violin', 'budget': 38000,
-         'description': 'Headline slot at our annual Diwali arts festival.',
-         'cover_url': 'https://images.unsplash.com/photo-1533174072545-7a4b6ad7a6c3?w=800'},
-        {'title': 'Warehouse EDM Night', 'city': 'Mumbai', 'event_type': 'club', 'genre': 'EDM',
-         'instrument_needed': 'DJ Deck', 'budget': 30000,
-         'description': 'Underground 2-hour set at a converted warehouse space.',
-         'cover_url': 'https://images.unsplash.com/photo-1571266028243-e4bb35f01e9d?w=800'},
-        {'title': 'Cafe Sundowner Series', 'city': 'Bengaluru', 'event_type': 'private', 'genre': 'Soul',
-         'instrument_needed': 'Vocals', 'budget': 8000,
-         'description': 'Weekly Sunday 2-hour acoustic set.',
-         'cover_url': 'https://images.unsplash.com/photo-1470229722913-7c0e2dbbafd3?w=800'},
-        {'title': 'Sangeet Night', 'city': 'Delhi', 'event_type': 'wedding', 'genre': 'Pop',
-         'instrument_needed': 'Keyboard', 'budget': 28000,
-         'description': 'Live band for pre-wedding sangeet.',
-         'cover_url': 'https://images.unsplash.com/photo-1533174072545-7a4b6ad7a6c3?w=800'},
-        {'title': 'Startup Launch Party', 'city': 'Bengaluru', 'event_type': 'corporate', 'genre': 'R&B',
-         'instrument_needed': 'Vocals', 'budget': 18000,
-         'description': 'Live vocals + DJ hybrid for 200-guest launch event.',
-         'cover_url': 'https://images.unsplash.com/photo-1429962714451-bb934ecdc4ec?w=800'},
-        {'title': 'Metal Fest — Stage 2', 'city': 'Delhi', 'event_type': 'festival', 'genre': 'Rock',
-         'instrument_needed': 'Drums', 'budget': 55000,
-         'description': 'Support slot at Delhi\'s biggest indie metal fest.',
-         'cover_url': 'https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=800'},
-    ]
-    gig_ids = []
-    for i, g in enumerate(gigs):
-        gid = str(uuid.uuid4())
-        gig_ids.append(gid)
-        future = (datetime.now(timezone.utc) + timedelta(days=7 + i * 4)).date().isoformat()
-        await db.gigs.insert_one({**g, 'id': gid, 'organizer_id': org_ids[i % len(org_ids)],
-                                  'date': future, 'status': 'open', 'created_at': now_iso(),
-                                  'featured': i < 2})
-
-    # Seed applications + messages
-    if musician_ids:
-        await db.applications.insert_one({'id': str(uuid.uuid4()), 'gig_id': gig_ids[0],
-                                          'musician_id': musician_ids[0], 'message': 'Would love to play this set!',
-                                          'status': 'accepted', 'created_at': now_iso()})
-        await db.messages.insert_one({'id': str(uuid.uuid4()), 'from_id': org_ids[0], 'to_id': musician_ids[0],
-                                      'text': "Hey Ariya, loved your last set. You free next Friday?",
-                                      'read': False, 'created_at': now_iso()})
-        await db.messages.insert_one({'id': str(uuid.uuid4()), 'from_id': musician_ids[0], 'to_id': org_ids[0],
-                                      'text': "Absolutely — send me the venue details please.",
-                                      'read': True, 'created_at': now_iso()})
-
-        # Community posts
-        posts_seed = [
-            {'author_idx': 0, 'text': "Rooftop rehearsal at sunset. New setlist coming together beautifully.",
-             'media_url': "https://images.unsplash.com/photo-1470229722913-7c0e2dbbafd3?w=800", 'media_type': 'image'},
-            {'author_idx': 1, 'text': "Finally got the pedalboard dialed in — try this signal chain if you want warmth without mud.",
-             'media_url': "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=800", 'media_type': 'image'},
-            {'author_idx': 2, 'text': "Backstage before the Diwali fusion set. What a night ahead.",
-             'media_url': "https://images.unsplash.com/photo-1533174072545-7a4b6ad7a6c3?w=800", 'media_type': 'image'},
-            {'author_idx': 3, 'text': "Dropped a new house edit on my page. Feedback welcome — this one's for the warehouse crowd.",
-             'media_url': None, 'media_type': None},
-        ]
-        for p in posts_seed:
-            aid = musician_ids[p['author_idx']]
-            ax_user = await db.users.find_one({'id': aid})
-            await db.posts.insert_one({'id': str(uuid.uuid4()), 'author_id': aid,
-                                       'author_name': ax_user['full_name'],
-                                       'author_avatar': ax_user.get('avatar_url'),
-                                       'text': p['text'], 'media_url': p['media_url'],
-                                       'media_type': p['media_type'],
-                                       'like_count': 12 + (p['author_idx'] * 5),
-                                       'comment_count': 2 + p['author_idx'],
-                                       'created_at': now_iso()})
-
-        # Bands
-        await db.bands.insert_one({'id': str(uuid.uuid4()), 'name': 'Midnight Kolaba',
-                                   'owner_id': musician_ids[0], 'city': 'Mumbai',
-                                   'genres': ['Jazz', 'Soul'],
-                                   'description': '4-piece live band for luxury weddings and rooftop events.',
-                                   'cover_url': 'https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=800',
-                                   'looking_for': ['Bassist'], 'members': [musician_ids[0]],
-                                   'created_at': now_iso()})
-        await db.bands.insert_one({'id': str(uuid.uuid4()), 'name': 'Static Signal',
-                                   'owner_id': musician_ids[1], 'city': 'Bengaluru',
-                                   'genres': ['Indie', 'Rock'],
-                                   'description': 'Indie rock outfit playing tech offsites and pubs.',
-                                   'cover_url': 'https://images.unsplash.com/photo-1429962714451-bb934ecdc4ec?w=800',
-                                   'looking_for': ['Drummer', 'Keys'], 'members': [musician_ids[1]],
-                                   'created_at': now_iso()})
-
-        # Equipment
-        eqs = [
-            {'title': 'Fender Stratocaster (2019) — Mint', 'listing_type': 'sale', 'category': 'Guitar',
-             'city': 'Mumbai', 'price': 68000, 'owner_id': musician_ids[1],
-             'description': 'American Standard, includes hard case. Barely gigged.',
-             'cover_url': 'https://images.unsplash.com/photo-1510915361894-db8b60106cb1?w=800'},
-            {'title': 'Shure SM58 x 4 — Rent', 'listing_type': 'rent', 'category': 'Mic',
-             'city': 'Bengaluru', 'price': 500, 'owner_id': musician_ids[4],
-             'description': '4 SM58s + XLR cables. Per day rate.',
-             'cover_url': 'https://images.unsplash.com/photo-1590602846989-a3ff5a1f45f2?w=800'},
-            {'title': 'Pioneer CDJ-3000 pair — Rent', 'listing_type': 'rent', 'category': 'DJ',
-             'city': 'Mumbai', 'price': 6000, 'owner_id': musician_ids[3],
-             'description': 'Latest CDJs + DJM-900 mixer. Per event rental.',
-             'cover_url': 'https://images.unsplash.com/photo-1571266028243-e4bb35f01e9d?w=800'},
-        ]
-        for e in eqs:
-            await db.equipment.insert_one({**e, 'id': str(uuid.uuid4()), 'created_at': now_iso()})
-
-        # Studios
-        await db.studios.insert_one({'id': str(uuid.uuid4()), 'name': 'Loft Studios',
-                                     'owner_id': org_ids[0], 'city': 'Mumbai',
-                                     'hourly_rate': 1500,
-                                     'description': 'Vintage-tuned live room + control room. Great for indie sessions.',
-                                     'cover_url': 'https://images.unsplash.com/photo-1598488035139-bdbb2231ce04?w=800',
-                                     'created_at': now_iso()})
-
-        # Lessons
-        await db.lessons.insert_one({'id': str(uuid.uuid4()), 'title': 'Modern Vocal Coaching',
-                                     'teacher_id': musician_ids[0], 'subject': 'Vocals',
-                                     'city': 'Mumbai', 'price_per_hour': 1200, 'format': 'both',
-                                     'description': 'Contemporary vocal technique — jazz, pop, soul. All levels.',
-                                     'cover_url': 'https://images.unsplash.com/photo-1516280440614-37939bbacd81?w=800',
-                                     'created_at': now_iso()})
-        await db.lessons.insert_one({'id': str(uuid.uuid4()), 'title': 'Fingerstyle Guitar Intensive',
-                                     'teacher_id': musician_ids[1], 'subject': 'Guitar',
-                                     'city': 'Bengaluru', 'price_per_hour': 900, 'format': 'online',
-                                     'description': 'Fingerstyle fundamentals, arrangement, tone. 8-week course.',
-                                     'cover_url': 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=800',
-                                     'created_at': now_iso()})
-
-    await seed_venues()
-
 # ================== Root ==================
 @api.get("/")
 async def root():
-    return {'app': 'StageLink API', 'version': '2.0'}
+    return {'app': 'gigZee API', 'version': '2.0'}
+
+@app.get("/health")
+async def health():
+    """Liveness + optional maintenance flag for the mobile app gate."""
+    if os.environ.get('MAINTENANCE_MODE', '').lower() in ('1', 'true', 'yes'):
+        return JSONResponse(
+            {
+                'ok': False,
+                'status': 'maintenance',
+                'message': os.environ.get(
+                    'MAINTENANCE_MESSAGE',
+                    'gigZee is under maintenance. Please try again shortly.',
+                ),
+            },
+            status_code=503,
+        )
+    return {'ok': True, 'status': 'ok'}
+
+# ================== App config (editable without app release) ==================
+class OnboardingConfigIn(BaseModel):
+    cities: Optional[List[str]] = None
+    default_city: Optional[str] = None
+    city_note: Optional[str] = None
+    interests_prompt: Optional[str] = None
+    interests: Optional[List[str]] = None
+
+async def _load_onboarding_config() -> dict:
+    doc = await db.config.find_one({'id': 'onboarding'}, {'_id': 0})
+    out = dict(DEFAULT_ONBOARDING_CONFIG)
+    if doc:
+        for k in ('cities', 'default_city', 'city_note', 'interests_prompt', 'interests'):
+            if doc.get(k) is not None:
+                out[k] = doc[k]
+    # Keep default_city inside cities
+    cities = out.get('cities') or [ALLOWED_CITY]
+    if not isinstance(cities, list) or not cities:
+        cities = [ALLOWED_CITY]
+    out['cities'] = cities
+    if out.get('default_city') not in cities:
+        out['default_city'] = cities[0]
+    return out
+
+@api.get("/config/onboarding")
+async def get_onboarding_config():
+    """Public — powers onboarding chips so cities/interests can change without an app release."""
+    return await _load_onboarding_config()
+
+@api.put("/config/onboarding")
+async def put_onboarding_config(inp: OnboardingConfigIn, u=Depends(get_user)):
+    """Update onboarding options (cities, interests, copy). Partial update supported."""
+    patch = {k: v for k, v in inp.dict(exclude_unset=True).items() if v is not None}
+    if not patch:
+        return await _load_onboarding_config()
+    if 'cities' in patch:
+        cities = [c.strip() for c in patch['cities'] if isinstance(c, str) and c.strip()]
+        if not cities:
+            raise HTTPException(400, "cities must include at least one city")
+        patch['cities'] = cities
+    if 'interests' in patch:
+        patch['interests'] = [i.strip() for i in patch['interests'] if isinstance(i, str) and i.strip()]
+    patch['id'] = 'onboarding'
+    patch['updated_at'] = now_iso()
+    patch['updated_by'] = u['id']
+    await db.config.update_one({'id': 'onboarding'}, {'$set': patch}, upsert=True)
+    return await _load_onboarding_config()
+
+PROFILE_OPTION_KEYS = ('professions', 'skills', 'genres', 'instruments', 'languages', 'pricing_types')
+
+class ProfileOptionsIn(BaseModel):
+    professions: Optional[List[str]] = None
+    skills: Optional[List[str]] = None
+    genres: Optional[List[str]] = None
+    instruments: Optional[List[str]] = None
+    languages: Optional[List[str]] = None
+    pricing_types: Optional[List[str]] = None
+
+def _clean_str_list(vals) -> List[str]:
+    if not isinstance(vals, list):
+        return []
+    out, seen = [], set()
+    for v in vals:
+        if not isinstance(v, str):
+            continue
+        s = v.strip()
+        if not s or s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+    return out
+
+async def _load_profile_options() -> dict:
+    doc = await db.config.find_one({'id': 'profile_options'}, {'_id': 0})
+    out = dict(DEFAULT_PROFILE_OPTIONS)
+    if doc:
+        for k in PROFILE_OPTION_KEYS:
+            cleaned = _clean_str_list(doc.get(k))
+            if cleaned:
+                out[k] = cleaned
+    return out
+
+@api.get("/config/profile-options")
+async def get_profile_options():
+    """Public — chip lists for edit profile (and related forms). Editable without an app release."""
+    return await _load_profile_options()
+
+@api.put("/config/profile-options")
+async def put_profile_options(inp: ProfileOptionsIn, u=Depends(get_user)):
+    """Update professions / skills / genres / instruments / languages. Partial update supported."""
+    patch = {}
+    raw = inp.dict(exclude_unset=True)
+    for k in PROFILE_OPTION_KEYS:
+        if k not in raw or raw[k] is None:
+            continue
+        cleaned = _clean_str_list(raw[k])
+        if not cleaned:
+            raise HTTPException(400, f"{k} must include at least one value")
+        patch[k] = cleaned
+    if not patch:
+        return await _load_profile_options()
+    patch['id'] = 'profile_options'
+    patch['updated_at'] = now_iso()
+    patch['updated_by'] = u['id']
+    await db.config.update_one({'id': 'profile_options'}, {'$set': patch}, upsert=True)
+    return await _load_profile_options()
 
 # ================== Entities: Bands / Equipment / Studios / Lessons ==================
 async def _list_entity(coll, city, q, category=None, listing_type=None, limit=100):
-    query = {}
-    if city and city != 'All': query['city'] = {'$regex': city, '$options': 'i'}
+    query = {**_city_query(city)}
     if category: query['category'] = category
     if listing_type: query['listing_type'] = listing_type
     if q:
-        query['$or'] = [{'title': {'$regex': q, '$options': 'i'}},
-                        {'name': {'$regex': q, '$options': 'i'}},
-                        {'description': {'$regex': q, '$options': 'i'}}]
+        rx = {'$regex': q, '$options': 'i'}
+        query['$or'] = [
+            {'title': rx},
+            {'name': rx},
+            {'description': rx},
+            {'category': rx},
+            {'subject': rx},
+            {'instrument_needed': rx},
+        ]
     return await coll.find(query, {'_id': 0}).sort('created_at', -1).limit(limit).to_list(limit)
+
+async def _owner_contact(owner_id: Optional[str]) -> dict:
+    """Public contact for a listing owner — phone hidden unless explicitly public."""
+    if not owner_id:
+        return {'phone': None, 'hide_contact': True}
+    m = await db.musicians.find_one({'user_id': owner_id}, {'_id': 0, 'phone': 1, 'hide_contact': 1}) or {}
+    # Opt-in: only expose phone when hide_contact is explicitly False
+    if m.get('hide_contact') is not False:
+        return {'phone': None, 'hide_contact': True}
+    phone = m.get('phone')
+    return {'phone': phone if phone else None, 'hide_contact': False}
+
+async def _get_entity_detail(coll, eid: str, owner_key: str = 'owner_id', cover_kind: str = 'gig'):
+    d = await coll.find_one({'id': eid}, {'_id': 0})
+    if not d:
+        raise HTTPException(404, "Not found")
+    d['cover_url'] = _default_cover(cover_kind, d.get('cover_url'), d.get('images'))
+    owner_id = d.get(owner_key)
+    owner = None
+    contact = {'phone': None, 'hide_contact': True}
+    if owner_id:
+        u = await db.users.find_one({'id': owner_id}, {'_id': 0, 'password_hash': 0})
+        owner = user_public(u) if u else None
+        contact = await _owner_contact(owner_id)
+    return {'item': d, 'owner': owner, 'contact': contact}
 
 @api.post("/bands")
 async def create_band(inp: BandIn, u=Depends(get_user)):
     bid = str(uuid.uuid4())
-    doc = {**inp.dict(), 'id': bid, 'owner_id': u['id'], 'created_at': now_iso(),
+    data = inp.dict()
+    data['cover_url'] = _default_cover('band', data.get('cover_url'))
+    doc = {**data, 'id': bid, 'owner_id': u['id'], 'created_at': now_iso(),
            'members': [u['id']]}
     await db.bands.insert_one(doc)
     doc.pop('_id', None)
+    AnalyticsService.schedule(u['id'], "band_created", entity_type="band", entity_id=bid)
+    AnalyticsService.schedule(u['id'], "first_band", entity_type="band", entity_id=bid, metadata={"funnel": True})
     return doc
 
 @api.get("/bands")
@@ -1291,16 +2072,40 @@ async def list_bands(city: Optional[str] = None, q: Optional[str] = None):
 
 @api.get("/bands/{bid}")
 async def get_band(bid: str):
-    d = await db.bands.find_one({'id': bid}, {'_id': 0})
-    if not d: raise HTTPException(404, "Not found")
-    return d
+    return await _get_entity_detail(db.bands, bid, owner_key='owner_id', cover_kind='band')
+
+@api.patch("/bands/{bid}")
+async def patch_band(bid: str, inp: BandIn, u=Depends(get_user)):
+    doc = await db.bands.find_one({'id': bid})
+    if not doc: raise HTTPException(404, "Not found")
+    if doc.get('owner_id') != u['id']: raise HTTPException(403, "Not yours to edit")
+    data = inp.dict()
+    data['cover_url'] = _default_cover('band', data.get('cover_url') or doc.get('cover_url'))
+    data['updated_at'] = now_iso()
+    await db.bands.update_one({'id': bid}, {'$set': data})
+    out = await db.bands.find_one({'id': bid}, {'_id': 0})
+    return out
 
 @api.post("/equipment")
 async def create_equipment(inp: EquipmentIn, u=Depends(get_user)):
     eid = str(uuid.uuid4())
-    doc = {**inp.dict(), 'id': eid, 'owner_id': u['id'], 'created_at': now_iso()}
+    images = list(inp.images or [])
+    cover = _default_cover('equipment', inp.cover_url, images)
+    if cover and cover not in images and not cover.startswith('https://images.unsplash.com'):
+        images = [cover] + images
+    if len(images) > EQUIPMENT_MAX_IMAGES:
+        raise HTTPException(400, f"Max {EQUIPMENT_MAX_IMAGES} images allowed")
+    doc = {
+        **inp.dict(),
+        'id': eid,
+        'owner_id': u['id'],
+        'created_at': now_iso(),
+        'images': images,
+        'cover_url': cover,
+    }
     await db.equipment.insert_one(doc)
     doc.pop('_id', None)
+    AnalyticsService.schedule(u['id'], "equipment_listed", entity_type="equipment", entity_id=eid)
     return doc
 
 @api.get("/equipment")
@@ -1311,45 +2116,123 @@ async def list_equipment(city: Optional[str] = None, q: Optional[str] = None,
 
 @api.get("/equipment/{eid}")
 async def get_equipment(eid: str):
-    d = await db.equipment.find_one({'id': eid}, {'_id': 0})
-    if not d: raise HTTPException(404, "Not found")
-    return d
+    return await _get_entity_detail(db.equipment, eid, owner_key='owner_id', cover_kind='equipment')
+
+@api.patch("/equipment/{eid}")
+async def patch_equipment(eid: str, inp: EquipmentIn, u=Depends(get_user)):
+    doc = await db.equipment.find_one({'id': eid})
+    if not doc: raise HTTPException(404, "Not found")
+    if doc.get('owner_id') != u['id']: raise HTTPException(403, "Not yours to edit")
+    images = list(inp.images or [])
+    cover = _default_cover('equipment', inp.cover_url or doc.get('cover_url'), images)
+    if cover and cover not in images and not str(cover).startswith('https://images.unsplash.com'):
+        images = [cover] + images
+    if len(images) > EQUIPMENT_MAX_IMAGES:
+        raise HTTPException(400, f"Max {EQUIPMENT_MAX_IMAGES} images allowed")
+    data = {**inp.dict(), 'images': images, 'cover_url': cover, 'updated_at': now_iso()}
+    await db.equipment.update_one({'id': eid}, {'$set': data})
+    return await db.equipment.find_one({'id': eid}, {'_id': 0})
 
 @api.post("/studios")
 async def create_studio(inp: StudioIn, u=Depends(get_user)):
     sid = str(uuid.uuid4())
-    doc = {**inp.dict(), 'id': sid, 'owner_id': u['id'], 'created_at': now_iso()}
+    images = list(inp.images or [])
+    cover = _default_cover('studio', inp.cover_url, images)
+    if cover and cover not in images and not cover.startswith('https://images.unsplash.com'):
+        images = [cover] + images
+    if len(images) > STUDIO_MAX_IMAGES:
+        raise HTTPException(400, f"Max {STUDIO_MAX_IMAGES} images allowed")
+    doc = {
+        **inp.dict(),
+        'id': sid,
+        'owner_id': u['id'],
+        'created_at': now_iso(),
+        'images': images,
+        'cover_url': cover,
+    }
     await db.studios.insert_one(doc)
     doc.pop('_id', None)
+    AnalyticsService.schedule(u['id'], "studio_listed", entity_type="studio", entity_id=sid)
     return doc
 
 @api.get("/studios")
 async def list_studios(city: Optional[str] = None, q: Optional[str] = None):
     return await _list_entity(db.studios, city, q)
 
+@api.get("/studios/{sid}")
+async def get_studio(sid: str):
+    return await _get_entity_detail(db.studios, sid, owner_key='owner_id', cover_kind='studio')
+
+@api.patch("/studios/{sid}")
+async def patch_studio(sid: str, inp: StudioIn, u=Depends(get_user)):
+    doc = await db.studios.find_one({'id': sid})
+    if not doc: raise HTTPException(404, "Not found")
+    if doc.get('owner_id') != u['id']: raise HTTPException(403, "Not yours to edit")
+    images = list(inp.images or [])
+    cover = _default_cover('studio', inp.cover_url or doc.get('cover_url'), images)
+    if cover and cover not in images and not str(cover).startswith('https://images.unsplash.com'):
+        images = [cover] + images
+    if len(images) > STUDIO_MAX_IMAGES:
+        raise HTTPException(400, f"Max {STUDIO_MAX_IMAGES} images allowed")
+    data = {**inp.dict(), 'images': images, 'cover_url': cover, 'updated_at': now_iso()}
+    await db.studios.update_one({'id': sid}, {'$set': data})
+    return await db.studios.find_one({'id': sid}, {'_id': 0})
+
 @api.post("/lessons")
 async def create_lesson(inp: LessonIn, u=Depends(get_user)):
     lid = str(uuid.uuid4())
-    doc = {**inp.dict(), 'id': lid, 'teacher_id': u['id'], 'created_at': now_iso()}
+    data = inp.dict()
+    data['cover_url'] = _default_cover('lesson', data.get('cover_url'))
+    doc = {**data, 'id': lid, 'teacher_id': u['id'], 'created_at': now_iso()}
     await db.lessons.insert_one(doc)
     doc.pop('_id', None)
+    AnalyticsService.schedule(u['id'], "lesson_created", entity_type="lesson", entity_id=lid)
     return doc
 
 @api.get("/lessons")
 async def list_lessons(city: Optional[str] = None, q: Optional[str] = None):
     return await _list_entity(db.lessons, city, q)
 
+@api.get("/lessons/{lid}")
+async def get_lesson(lid: str):
+    return await _get_entity_detail(db.lessons, lid, owner_key='teacher_id', cover_kind='lesson')
+
+@api.patch("/lessons/{lid}")
+async def patch_lesson(lid: str, inp: LessonIn, u=Depends(get_user)):
+    doc = await db.lessons.find_one({'id': lid})
+    if not doc: raise HTTPException(404, "Not found")
+    if doc.get('teacher_id') != u['id']: raise HTTPException(403, "Not yours to edit")
+    data = inp.dict()
+    data['cover_url'] = _default_cover('lesson', data.get('cover_url') or doc.get('cover_url'))
+    data['updated_at'] = now_iso()
+    await db.lessons.update_one({'id': lid}, {'$set': data})
+    return await db.lessons.find_one({'id': lid}, {'_id': 0})
+
 # ================== Community Feed / Posts ==================
 @api.post("/posts")
 async def create_post(inp: PostIn, u=Depends(get_user)):
     pid = str(uuid.uuid4())
+    visibility = inp.visibility or 'public'
     doc = {'id': pid, 'author_id': u['id'], 'author_name': u['full_name'],
            'author_avatar': u.get('avatar_url'), 'text': inp.text,
            'media_url': inp.media_url, 'media_type': inp.media_type,
-           'visibility': inp.visibility or 'public',
+           'visibility': visibility,
            'like_count': 0, 'comment_count': 0, 'created_at': now_iso()}
     await db.posts.insert_one(doc)
     doc.pop('_id', None)
+    deep = f"/user/{u['id']}/posts"
+    preview = (inp.text or '').strip()
+    preview = preview[:80] + ('…' if len(preview) > 80 else '') or 'Shared a new post'
+    if visibility in ('public', 'followers'):
+        follows = await db.follows.find(
+            {'target_user_id': u['id']}, {'_id': 0, 'follower_id': 1}
+        ).to_list(500)
+        follower_ids = [f['follower_id'] for f in follows if f.get('follower_id')]
+        if follower_ids:
+            NotificationService.community_post(follower_ids, u, pid, preview)
+    await _notify_mentions(inp.text or '', u, deep, skip_ids={u['id']})
+    AnalyticsService.schedule(u['id'], "post_created", entity_type="post", entity_id=pid)
+    AnalyticsService.schedule(u['id'], "first_post", entity_type="post", entity_id=pid, metadata={"funnel": True})
     return doc
 
 @api.get("/posts/feed")
@@ -1384,17 +2267,43 @@ async def toggle_like(pid: str, u=Depends(get_user)):
         return {'liked': False}
     await db.likes.insert_one({'post_id': pid, 'user_id': u['id'], 'created_at': now_iso()})
     await db.posts.update_one({'id': pid}, {'$inc': {'like_count': 1}})
+    author = p.get('author_id')
+    if author and author != u['id']:
+        NotificationService.post_liked(author, u, pid)
+    AnalyticsService.schedule(u['id'], "post_liked", entity_type="post", entity_id=pid)
     return {'liked': True}
 
 @api.post("/posts/comment")
 async def add_comment(inp: CommentIn, u=Depends(get_user)):
     if not inp.text.strip(): raise HTTPException(400, "Empty comment")
-    doc = {'id': str(uuid.uuid4()), 'post_id': inp.post_id, 'author_id': u['id'],
-           'author_name': u['full_name'], 'author_avatar': u.get('avatar_url'),
-           'text': inp.text.strip(), 'created_at': now_iso()}
+    post = await db.posts.find_one({'id': inp.post_id}, {'_id': 0})
+    if not post: raise HTTPException(404, "Post not found")
+    parent = None
+    if inp.parent_id:
+        parent = await db.comments.find_one({'id': inp.parent_id, 'post_id': inp.post_id}, {'_id': 0})
+        if not parent:
+            raise HTTPException(404, "Parent comment not found")
+    doc = {
+        'id': str(uuid.uuid4()), 'post_id': inp.post_id, 'author_id': u['id'],
+        'author_name': u['full_name'], 'author_avatar': u.get('avatar_url'),
+        'text': inp.text.strip(), 'parent_id': inp.parent_id,
+        'created_at': now_iso(),
+    }
     await db.comments.insert_one(doc)
     await db.posts.update_one({'id': inp.post_id}, {'$inc': {'comment_count': 1}})
     doc.pop('_id', None)
+    preview = inp.text.strip()[:80] + ("…" if len(inp.text.strip()) > 80 else "")
+    author = post.get('author_id')
+    deep = f"/user/{author}/posts" if author else "/notifications"
+    skip = {u['id']}
+    if parent and parent.get('author_id') and parent['author_id'] != u['id']:
+        NotificationService.comment_reply(parent['author_id'], u, inp.post_id, preview)
+        skip.add(parent['author_id'])
+    elif author and author != u['id']:
+        NotificationService.post_commented(author, u, inp.post_id, preview)
+        skip.add(author)
+    await _notify_mentions(inp.text, u, deep, skip_ids=skip)
+    AnalyticsService.schedule(u['id'], "comment_created", entity_type="post", entity_id=inp.post_id)
     return doc
 
 @api.patch("/posts/{pid}")
@@ -1464,9 +2373,12 @@ async def toggle_follow(target_id: str, u=Depends(get_user)):
     existing = await db.follows.find_one({'follower_id': u['id'], 'target_user_id': target_id})
     if existing:
         await db.follows.delete_one({'follower_id': u['id'], 'target_user_id': target_id})
+        AnalyticsService.schedule(u['id'], "unfollow", entity_type="user", entity_id=target_id)
         return {'following': False}
     await db.follows.insert_one({'follower_id': u['id'], 'target_user_id': target_id,
                                  'created_at': now_iso()})
+    NotificationService.new_follower(target_id, u)
+    AnalyticsService.schedule(u['id'], "follow", entity_type="user", entity_id=target_id)
     return {'following': True}
 
 async def _users_summary(user_ids: list[str]):
@@ -1496,6 +2408,28 @@ async def list_followers(uid: str):
 async def list_following(uid: str):
     rows = await db.follows.find({'follower_id': uid}, {'_id': 0}).sort('created_at', -1).to_list(200)
     return await _users_summary([r['target_user_id'] for r in rows])
+
+@api.get("/users/{uid}/posts")
+async def list_user_posts(uid: str, request: Request, skip: int = 0, limit: int = 20):
+    """Paginated posts for a user profile. Visibility-aware for non-owners."""
+    viewer = await _optional_user(request)
+    is_self = bool(viewer and viewer['id'] == uid)
+    limit = max(1, min(int(limit or 20), 50))
+    skip = max(0, int(skip or 0))
+    post_filter: dict = {'author_id': uid}
+    if not is_self:
+        post_filter = {'author_id': uid, '$or': [
+            {'visibility': 'public'}, {'visibility': {'$exists': False}}
+        ]}
+    total = await db.posts.count_documents(post_filter)
+    items = await db.posts.find(post_filter, {'_id': 0}).sort('created_at', -1).skip(skip).limit(limit).to_list(limit)
+    return {
+        'items': items,
+        'total': total,
+        'skip': skip,
+        'limit': limit,
+        'has_more': skip + len(items) < total,
+    }
 
 @api.get("/entities/mine")
 async def my_entities(u=Depends(get_user)):
@@ -1534,23 +2468,19 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 @app.on_event("startup")
 async def startup():
     try:
-        # Wipe old single-role user data if legacy fields exist (migration)
+        await init_pool()
+        # Migrate legacy single-role user docs if present
         legacy = await db.users.find_one({'role': {'$exists': True}}, {'_id': 0})
         if legacy:
-            # migrate: convert role -> roles/active_role
             async for doc in db.users.find({'role': {'$exists': True}}):
                 r = doc.get('role')
                 update = {'$unset': {'role': ""}}
                 if r and 'roles' not in doc:
                     update['$set'] = {'roles': [r], 'active_role': r}
-                await db.users.update_one({'_id': doc['_id']}, update)
-        if await db.users.count_documents({}) == 0:
-            await do_seed()
-        elif await db.venues.count_documents({}) == 0:
-            await seed_venues()
+                await db.users.update_one({'id': doc['id']}, update)
     except Exception as e:
         logging.exception("Startup error: %s", e)
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
-    client.close()
+    await close_pool()
