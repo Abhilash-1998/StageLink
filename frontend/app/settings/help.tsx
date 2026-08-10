@@ -21,7 +21,11 @@ const FAQS: { q: string; a: string }[] = [
   },
   {
     q: "How do I delete my account?",
-    a: "Settings → Delete account. This permanently removes your profile, posts, listings, and messages.",
+    a: "Settings → Delete account. This permanently removes your profile, posts, listings, and messages. More info: https://gigzee.in/account-deletion/",
+  },
+  {
+    q: "Where is the Privacy Policy?",
+    a: "Read it at https://gigzee.in/privacy-policy/ (also linked from Settings → Legal).",
   },
 ];
 

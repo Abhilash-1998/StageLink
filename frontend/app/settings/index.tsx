@@ -287,6 +287,35 @@ export default function Settings() {
           <Ionicons name="chevron-forward" size={18} color={theme.textDim} />
         </Pressable>
 
+        <Text style={styles.sectionTitle}>Legal</Text>
+        <Pressable
+          testID="settings-privacy"
+          onPress={() => Linking.openURL("https://gigzee.in/privacy-policy/")}
+          style={styles.row}
+        >
+          <Ionicons name="shield-checkmark-outline" size={18} color={theme.text} />
+          <Text style={styles.rowTxt}>Privacy Policy</Text>
+          <Ionicons name="open-outline" size={18} color={theme.textDim} />
+        </Pressable>
+        <Pressable
+          testID="settings-terms"
+          onPress={() => Linking.openURL("https://gigzee.in/terms-of-service/")}
+          style={styles.row}
+        >
+          <Ionicons name="document-text-outline" size={18} color={theme.text} />
+          <Text style={styles.rowTxt}>Terms of Service</Text>
+          <Ionicons name="open-outline" size={18} color={theme.textDim} />
+        </Pressable>
+        <Pressable
+          testID="settings-account-deletion-info"
+          onPress={() => Linking.openURL("https://gigzee.in/account-deletion/")}
+          style={styles.row}
+        >
+          <Ionicons name="information-circle-outline" size={18} color={theme.text} />
+          <Text style={styles.rowTxt}>Account deletion info</Text>
+          <Ionicons name="open-outline" size={18} color={theme.textDim} />
+        </Pressable>
+
         <Text style={styles.sectionTitle}>Session</Text>
         <Pressable
           testID="settings-signout"
