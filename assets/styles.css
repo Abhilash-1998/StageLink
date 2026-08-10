@@ -1,0 +1,119 @@
+/* gigZee public legal pages */
+:root {
+  --bg: #f7f8fc;
+  --card: #ffffff;
+  --text: #0f172a;
+  --muted: #475569;
+  --border: #e2e8f0;
+  --navy: #0b0e4e;
+  --accent: #db2777;
+  --link: #1d4ed8;
+  --max: 820px;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  color: var(--text);
+  background: var(--bg);
+  line-height: 1.65;
+  font-size: 16px;
+}
+a { color: var(--link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.top {
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.top-inner {
+  max-width: var(--max);
+  margin: 0 auto;
+  padding: 14px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.brand {
+  font-weight: 800;
+  font-size: 1.15rem;
+  color: var(--navy);
+  letter-spacing: -0.02em;
+}
+.brand span {
+  background: linear-gradient(120deg, #db2777, #2563eb);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.nav { display: flex; flex-wrap: wrap; gap: 14px; font-size: 0.92rem; }
+
+main {
+  max-width: var(--max);
+  margin: 0 auto;
+  padding: 28px 20px 64px;
+}
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 28px 24px;
+  box-shadow: 0 8px 30px rgba(15, 23, 42, 0.04);
+}
+h1 {
+  margin: 0 0 8px;
+  font-size: 1.85rem;
+  letter-spacing: -0.03em;
+  color: var(--navy);
+}
+.meta {
+  color: var(--muted);
+  font-size: 0.95rem;
+  margin-bottom: 24px;
+}
+h2 {
+  margin: 28px 0 10px;
+  font-size: 1.2rem;
+  color: var(--navy);
+}
+h3 {
+  margin: 18px 0 8px;
+  font-size: 1.05rem;
+}
+p, li { color: #1e293b; }
+ul { padding-left: 1.2rem; }
+li { margin: 6px 0; }
+.note {
+  background: #fdf2f8;
+  border: 1px solid #fbcfe8;
+  border-radius: 12px;
+  padding: 14px 16px;
+  color: #9d174d;
+  font-size: 0.95rem;
+}
+.toc {
+  background: #f8fafc;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 18px;
+  margin: 18px 0 8px;
+}
+.toc a { display: block; margin: 4px 0; }
+footer {
+  max-width: var(--max);
+  margin: 0 auto;
+  padding: 0 20px 40px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+@media (max-width: 640px) {
+  .top-inner { flex-direction: column; align-items: flex-start; }
+  h1 { font-size: 1.55rem; }
+  .card { padding: 22px 16px; }
+}
