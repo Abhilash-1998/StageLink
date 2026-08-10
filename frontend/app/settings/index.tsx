@@ -290,7 +290,7 @@ export default function Settings() {
         <Text style={styles.sectionTitle}>Legal</Text>
         <Pressable
           testID="settings-privacy"
-          onPress={() => Linking.openURL("https://gigzee.in/privacy-policy/")}
+          onPress={() => Linking.openURL("https://abhilash-1998.github.io/StageLink/privacy-policy/")}
           style={styles.row}
         >
           <Ionicons name="shield-checkmark-outline" size={18} color={theme.text} />
@@ -299,7 +299,7 @@ export default function Settings() {
         </Pressable>
         <Pressable
           testID="settings-terms"
-          onPress={() => Linking.openURL("https://gigzee.in/terms-of-service/")}
+          onPress={() => Linking.openURL("https://abhilash-1998.github.io/StageLink/terms-of-service/")}
           style={styles.row}
         >
           <Ionicons name="document-text-outline" size={18} color={theme.text} />
@@ -308,7 +308,7 @@ export default function Settings() {
         </Pressable>
         <Pressable
           testID="settings-account-deletion-info"
-          onPress={() => Linking.openURL("https://gigzee.in/account-deletion/")}
+          onPress={() => Linking.openURL("https://abhilash-1998.github.io/StageLink/account-deletion/")}
           style={styles.row}
         >
           <Ionicons name="information-circle-outline" size={18} color={theme.text} />
