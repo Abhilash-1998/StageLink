@@ -26,15 +26,10 @@ export default function Settings() {
   const [deleting, setDeleting] = useState(false);
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushBusy, setPushBusy] = useState(false);
-  const [pushStatus, setPushStatus] = useState<string>("Checking…");
 
   const refreshPushStatus = async () => {
-    if (Platform.OS === "web") {
-      setPushStatus("Push is not available on web.");
-      return;
-    }
+    if (Platform.OS === "web") return;
     if (isRunningInExpoGo()) {
-      setPushStatus("Expo Go cannot receive push (SDK 53+). Use: npx expo run:android");
       setPushEnabled(false);
       return;
     }
@@ -45,12 +40,6 @@ export default function Settings() {
       const res = await fetchApi<{ active_count?: number }>("/devices");
       serverCount = res?.active_count || 0;
     } catch {}
-    const lines = [
-      `Permission: ${perm}`,
-      `Device token: ${token ? "registered" : "missing"}`,
-      `Server devices: ${serverCount}`,
-    ];
-    setPushStatus(lines.join("\n"));
     setPushEnabled(perm === "granted" && !!token && serverCount > 0);
   };
 
@@ -177,33 +166,6 @@ export default function Settings() {
         </Pressable>
 
         <Text style={styles.sectionTitle}>Notifications</Text>
-        <View style={styles.statusCard}>
-          <Text style={styles.statusTitle}>Push status</Text>
-          <Text style={styles.statusBody}>{pushStatus}</Text>
-          <Pressable
-            testID="settings-push-reregister"
-            onPress={async () => {
-              setPushBusy(true);
-              try {
-                const result = await syncPushRegistrationWithBackend(fetchApi, { force: true });
-                await refreshPushStatus();
-                Alert.alert(
-                  result.ok ? "Device registered" : "Registration failed",
-                  result.ok
-                    ? "This device is registered for push. Close the app and send a test notification."
-                    : (result.error || "Unknown error"),
-                );
-              } catch (e: any) {
-                Alert.alert("Registration failed", e?.message || "Try again.");
-              } finally {
-                setPushBusy(false);
-              }
-            }}
-            style={styles.statusBtn}
-          >
-            <Text style={styles.statusBtnTxt}>Re-register this device</Text>
-          </Pressable>
-        </View>
         <View style={styles.row}>
           <Ionicons name="notifications-outline" size={18} color={theme.text} />
           <Text style={styles.rowTxt}>Push notifications</Text>
@@ -222,47 +184,6 @@ export default function Settings() {
         <Pressable testID="settings-notif-inbox" onPress={() => router.push("/notifications")} style={styles.row}>
           <Ionicons name="mail-unread-outline" size={18} color={theme.text} />
           <Text style={styles.rowTxt}>Notification inbox</Text>
-          <Ionicons name="chevron-forward" size={18} color={theme.textDim} />
-        </Pressable>
-        <Pressable testID="settings-notif-prefs" onPress={() => router.push("/settings/notifications")} style={styles.row}>
-          <Ionicons name="options-outline" size={18} color={theme.text} />
-          <Text style={styles.rowTxt}>Notification categories</Text>
-          <Ionicons name="chevron-forward" size={18} color={theme.textDim} />
-        </Pressable>
-        <Pressable
-          testID="settings-notif-test"
-          onPress={async () => {
-            try {
-              const reg = await syncPushRegistrationWithBackend(fetchApi, { force: true });
-              await refreshPushStatus();
-              const res: any = await fetchApi("/notifications/test", {
-                method: "POST",
-                body: JSON.stringify({}),
-              });
-              const push = res?.push || {};
-              const devices = Array.isArray(push.tokens) ? push.tokens.length : 0;
-              if (res?.ok && push.sent > 0) {
-                Alert.alert(
-                  "Push sent",
-                  `Expo accepted ${push.sent} ticket(s) for ${devices} device(s).\n\nClose the app completely, then check your notification tray.`,
-                );
-              } else {
-                const receiptHint = push.receipts
-                  ? `\n\nReceipts: ${JSON.stringify(push.receipts).slice(0, 280)}`
-                  : "";
-                Alert.alert(
-                  "Push not delivered",
-                  `${res?.message || push.error || "No devices/tickets."}${reg.error ? `\n\nRegistration: ${reg.error}` : ""}${receiptHint}\n\nUse a development build (not Expo Go) and upload FCM V1 credentials to EAS for Android.`,
-                );
-              }
-            } catch (e: any) {
-              Alert.alert("Couldn't send test", e?.message || "Try again.");
-            }
-          }}
-          style={styles.row}
-        >
-          <Ionicons name="flash-outline" size={18} color={theme.text} />
-          <Text style={styles.rowTxt}>Send test notification</Text>
           <Ionicons name="chevron-forward" size={18} color={theme.textDim} />
         </Pressable>
 
@@ -357,24 +278,4 @@ const styles = StyleSheet.create({
   sectionTitle: { ...type.tiny, color: theme.textDim, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.6, marginTop: 8 },
   row: { flexDirection: "row", alignItems: "center", gap: 12, backgroundColor: theme.bg2, borderRadius: theme.radius.lg, padding: 16, borderWidth: 1, borderColor: theme.border },
   rowTxt: { ...type.bodySm, color: theme.text, fontWeight: "600", flex: 1 },
-  statusCard: {
-    backgroundColor: theme.bg2,
-    borderRadius: theme.radius.lg,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: theme.border,
-    gap: 10,
-  },
-  statusTitle: { ...type.bodySm, color: theme.text, fontWeight: "700" },
-  statusBody: { ...type.caption, color: theme.textMid, lineHeight: 18 },
-  statusBtn: {
-    alignSelf: "flex-start",
-    backgroundColor: theme.brandTint,
-    borderRadius: theme.radius.md,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderWidth: 1,
-    borderColor: theme.brand,
-  },
-  statusBtnTxt: { ...type.caption, color: theme.brand, fontWeight: "700" },
 });

@@ -1,4 +1,4 @@
-"""StageLink Iteration 5 backend regression tests.
+"""gigZee Iteration 5 backend regression tests.
 
 Covers:
 - Discover endpoints (/musicians, /gigs, /bands, /studios, /equipment, /lessons, /venues)
@@ -6,36 +6,26 @@ Covers:
 - Comment CRUD: POST /posts/comment increments comment_count; DELETE /comments/{cid} decrements.
 - Post PATCH/DELETE regression (owner only) still functional.
 - Band DELETE regression.
+
+No seed/demo accounts — aliases musician_a/musician_b as ariya/kabir.
 """
 import uuid
 import pytest
-import requests
 from conftest import BASE_URL
 
 
-# ---------- helpers ----------
-def _login(api, email="ariya.kapoor@stagelink.dev", pw="demo1234"):
-    r = api.post(f"{BASE_URL}/api/auth/login", json={"email": email, "password": pw})
-    assert r.status_code == 200, f"login failed: {r.text}"
-    return r.json()
+@pytest.fixture(scope="module")
+def auth_ariya(musician_a):
+    return musician_a["token"], musician_a["user"]
+
+
+@pytest.fixture(scope="module")
+def auth_kabir(musician_b):
+    return musician_b["token"], musician_b["user"]
 
 
 def _hdr(tok):
     return {"Authorization": f"Bearer {tok}", "Content-Type": "application/json"}
-
-
-@pytest.fixture(scope="module")
-def auth_ariya():
-    s = requests.Session()
-    j = _login(s)
-    return j["access_token"], j["user"]
-
-
-@pytest.fixture(scope="module")
-def auth_kabir():
-    s = requests.Session()
-    j = _login(s, email="kabir.rao@stagelink.dev")
-    return j["access_token"], j["user"]
 
 
 # ---------- Discover endpoints ----------
@@ -70,7 +60,7 @@ class TestDiscoverEndpoints:
 
 # ---------- Comments ----------
 class TestComments:
-    """Full comment lifecycle. Uses a fresh post from ariya so we own it."""
+    """Full comment lifecycle. Uses a fresh post from musician_a so we own it."""
 
     _post_id = None
     _cid = None
@@ -103,7 +93,6 @@ class TestComments:
         assert c.get("author_id") == user_k["id"]
         TestComments._cid = c["id"]
 
-        # Verify count increment (endpoint returns {post: {...}, comments: [...]})
         r2 = api_client.get(f"{BASE_URL}/api/posts/{TestComments._post_id}", headers=_hdr(tok_a))
         assert r2.status_code == 200
         body = r2.json()
@@ -115,15 +104,11 @@ class TestComments:
     def test_c_non_author_cannot_delete_comment(self, api_client, auth_ariya):
         tok_a, _ = auth_ariya
         assert TestComments._cid
-        # Ariya isn't the comment author, only post owner. Server may allow post-owner delete.
-        # Try; if 200 ok we skip the next teardown. Per spec: author only.
         r = api_client.delete(
             f"{BASE_URL}/api/comments/{TestComments._cid}", headers=_hdr(tok_a)
         )
-        # Author-only means Ariya should be rejected (403) or accepted if post-owner too. Prefer rejection.
         assert r.status_code in (403, 401, 404, 200), r.text
         if r.status_code == 200:
-            # server allows post-owner delete — flag but don't fail hard
             pytest.skip("Server permits post owner to delete comment (deviation from spec)")
 
     def test_d_author_deletes_comment_decrements_count(self, api_client, auth_kabir, auth_ariya):
@@ -160,7 +145,6 @@ class TestPostCRUDRegression:
         assert r.status_code in (200, 201), r.text
         pid = r.json()["id"]
 
-        # PATCH
         r2 = api_client.patch(
             f"{BASE_URL}/api/posts/{pid}",
             json={"text": "TEST_iter5_patch_new"},
@@ -168,18 +152,15 @@ class TestPostCRUDRegression:
         )
         assert r2.status_code in (200, 204), r2.text
 
-        # Verify via GET (response wrapper: {post, comments})
         r3 = api_client.get(f"{BASE_URL}/api/posts/{pid}", headers=_hdr(tok))
         assert r3.status_code == 200
         body = r3.json()
         post_obj = body.get("post") or body
         assert post_obj.get("text") == "TEST_iter5_patch_new"
 
-        # DELETE
         r4 = api_client.delete(f"{BASE_URL}/api/posts/{pid}", headers=_hdr(tok))
         assert r4.status_code in (200, 204), r4.text
 
-        # Verify gone
         r5 = api_client.get(f"{BASE_URL}/api/posts/{pid}", headers=_hdr(tok))
         assert r5.status_code == 404
 
@@ -201,7 +182,6 @@ class TestPostCRUDRegression:
         )
         assert r2.status_code in (401, 403, 404), r2.text
 
-        # cleanup
         api_client.delete(f"{BASE_URL}/api/posts/{pid}", headers=_hdr(tok_a))
 
 
@@ -211,12 +191,11 @@ class TestBandDeleteRegression:
         tok, _ = auth_ariya
         payload = {
             "name": f"TEST_band_{uuid.uuid4().hex[:5]}",
-            "city": "Mumbai",
+            "city": "Hyderabad",
             "genres": ["Jazz"],
             "looking_for": ["Drummer"],
         }
         r = api_client.post(f"{BASE_URL}/api/bands", json=payload, headers=_hdr(tok))
-        # Some backends accept only /bands with different schema; accept 200/201 or skip
         if r.status_code not in (200, 201):
             pytest.skip(f"band create not accepted: {r.status_code} {r.text[:100]}")
         bid = r.json().get("id")

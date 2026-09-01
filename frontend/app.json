@@ -10,7 +10,7 @@
     "newArchEnabled": true,
     "notification": {
       "icon": "./assets/images/notification-icon.png",
-      "color": "#F97316",
+      "color": "#DB2777",
       "androidMode": "default",
       "androidCollapsedTitle": "#{unread_notifications} new updates"
     },
@@ -31,11 +31,12 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#0B0F1A",
+        "foregroundImage": "./assets/images/icon.png",
+        "backgroundColor": "#FFFFFF",
         "monochromeImage": "./assets/images/notification-icon.png"
       },
       "edgeToEdgeEnabled": true,
+      "versionCode": 4,
       "package": "com.gigze.GigZe",
       "googleServicesFile": "./google-services.json",
       "permissions": [
@@ -70,9 +71,9 @@
         "expo-splash-screen",
         {
           "image": "./assets/images/splash-image.png",
-          "imageWidth": 200,
+          "imageWidth": 220,
           "resizeMode": "contain",
-          "backgroundColor": "#000000"
+          "backgroundColor": "#FFFFFF"
         }
       ],
       [
@@ -92,7 +93,7 @@
         "expo-notifications",
         {
           "icon": "./assets/images/notification-icon.png",
-          "color": "#F97316",
+          "color": "#DB2777",
           "defaultChannel": "default",
           "sounds": []
         }

@@ -8,7 +8,6 @@ import { theme, type } from "@/src/theme";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { MediaPickerSheet, PickedMedia } from "@/src/components/MediaPickerSheet";
 import { EQUIPMENT_CATEGORIES, LESSON_SUBJECTS, DEFAULT_CITY } from "@/src/data/options";
-import { DEFAULT_COVERS } from "@/src/utils/covers";
 
 const EQUIPMENT_MAX_IMAGES = 3;
 const STUDIO_MAX_IMAGES = 3;
@@ -48,12 +47,13 @@ export default function Create() {
   const [showPicker, setShowPicker] = useState(false);
 
   const isMultiPhoto = action === "equipment_rent" || action === "equipment_sale" || action === "studio";
-  const listingMax = action === "studio" ? STUDIO_MAX_IMAGES : EQUIPMENT_MAX_IMAGES;
+  const isCoverListing = action === "band" || action === "lesson";
+  const listingMax = action === "studio" ? STUDIO_MAX_IMAGES : isCoverListing ? 1 : EQUIPMENT_MAX_IMAGES;
   const photoSlotsLeft = Math.max(0, listingMax - eqImages.length);
 
   const onPickedMedia = (items: PickedMedia[]) => {
     if (!items.length) return;
-    if (isMultiPhoto) {
+    if (isMultiPhoto || isCoverListing) {
       const photos = items.filter((i) => i.type === "image").map((i) => i.uri);
       if (!photos.length) return;
       setEqImages((prev) => [...prev, ...photos].slice(0, listingMax));
@@ -89,9 +89,10 @@ export default function Create() {
         setOk("Posted to community");
       } else if (action === "band") {
         if (!title.trim() || !city.trim()) throw new Error("Name and city required");
+        if (eqImages.length < 1) throw new Error("Add a cover photo");
         await fetchApi("/bands", { method: "POST", body: JSON.stringify({
           name: title, city, description: desc, genres: [],
-          cover_url: DEFAULT_COVERS.band,
+          cover_url: eqImages[0],
         })});
         setOk("Band created");
       } else if (action === "equipment_rent" || action === "equipment_sale") {
@@ -122,10 +123,11 @@ export default function Create() {
         setOk("Studio added");
       } else if (action === "lesson") {
         if (!title.trim() || !city.trim() || !price.trim()) throw new Error("Fill all fields");
+        if (eqImages.length < 1) throw new Error("Add a cover photo");
         await fetchApi("/lessons", { method: "POST", body: JSON.stringify({
           title, subject: category, city, price_per_hour: parseInt(price), format: "both",
           description: desc,
-          cover_url: DEFAULT_COVERS.lesson,
+          cover_url: eqImages[0],
         })});
         setOk("Lesson listed");
       }
@@ -204,6 +206,24 @@ export default function Create() {
           )}
           {action === "band" && (
             <>
+              <Text style={styles.label}>Cover photo</Text>
+              <Text style={styles.hint}>Required — this is what people see in Discover.</Text>
+              <View style={styles.eqGrid}>
+                {eqImages.map((uri, idx) => (
+                  <View key={`band-${idx}-${uri.slice(0, 24)}`} style={styles.eqThumbWrap}>
+                    <Image source={{ uri }} style={styles.eqThumb} />
+                    <Pressable testID={`band-img-remove-${idx}`} onPress={() => removeEqImage(idx)} style={styles.eqThumbX}>
+                      <Ionicons name="close" size={14} color="#fff" />
+                    </Pressable>
+                  </View>
+                ))}
+                {photoSlotsLeft > 0 && (
+                  <Pressable testID="band-add-cover" onPress={() => setShowPicker(true)} style={styles.eqAddTile}>
+                    <Ionicons name="camera" size={22} color={theme.brand} />
+                    <Text style={styles.eqAddTxt}>Add</Text>
+                  </Pressable>
+                )}
+              </View>
               <Text style={styles.label}>Band name</Text>
               <TextInput testID="band-name" style={styles.input} value={title} onChangeText={setTitle} placeholder="Midnight Kolaba" placeholderTextColor={theme.textDim} />
               <Text style={styles.label}>Home city</Text>
@@ -308,6 +328,24 @@ export default function Create() {
           )}
           {action === "lesson" && (
             <>
+              <Text style={styles.label}>Cover photo</Text>
+              <Text style={styles.hint}>Required — this is what people see in Discover.</Text>
+              <View style={styles.eqGrid}>
+                {eqImages.map((uri, idx) => (
+                  <View key={`lesson-${idx}-${uri.slice(0, 24)}`} style={styles.eqThumbWrap}>
+                    <Image source={{ uri }} style={styles.eqThumb} />
+                    <Pressable testID={`lesson-img-remove-${idx}`} onPress={() => removeEqImage(idx)} style={styles.eqThumbX}>
+                      <Ionicons name="close" size={14} color="#fff" />
+                    </Pressable>
+                  </View>
+                ))}
+                {photoSlotsLeft > 0 && (
+                  <Pressable testID="lesson-add-cover" onPress={() => setShowPicker(true)} style={styles.eqAddTile}>
+                    <Ionicons name="camera" size={22} color={theme.brand} />
+                    <Text style={styles.eqAddTxt}>Add</Text>
+                  </Pressable>
+                )}
+              </View>
               <Text style={styles.label}>Lesson title</Text>
               <TextInput testID="lesson-title" style={styles.input} value={title} onChangeText={setTitle} placeholder="Contemporary Guitar 101" placeholderTextColor={theme.textDim} />
               <Text style={styles.label}>Subject</Text>

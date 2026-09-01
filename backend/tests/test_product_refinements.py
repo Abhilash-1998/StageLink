@@ -1,14 +1,6 @@
 """
 Iteration 4 backend tests — Product refinements v1
-Covers:
-  - PATCH /api/posts/{pid} (owner edit; 403 non-owner; 404 missing)
-  - DELETE /api/posts/{pid} (owner; cascades comments+likes; 403 non-owner)
-  - DELETE /api/comments/{cid} (author; decrements post comment_count)
-  - DELETE /api/gigs/{gid} (organizer only; cascades applications)
-  - DELETE /api/bands/{bid}, /api/equipment/{eid}, /api/studios/{sid}, /api/lessons/{lid}
-  - GET /api/profile/musician/{user_id} still returns unified profile
-  - GET /api/entities/mine returns gigs, bands, equipment, studios, lessons, posts
-  - POST /api/posts still works
+Creates its own users via make_musician / make_organizer (no demo seed accounts).
 """
 import os
 import pytest
@@ -16,42 +8,29 @@ import requests
 from dotenv import load_dotenv
 from pathlib import Path
 
-load_dotenv(Path(__file__).parent.parent.parent / 'frontend' / '.env')
-BASE_URL = os.environ.get('EXPO_PUBLIC_BACKEND_URL').rstrip('/')
-
-ARIYA = ("ariya.kapoor@stagelink.dev", "demo1234")
-KABIR = ("kabir.rao@stagelink.dev", "demo1234")
-SUNSET = ("sunset@stagelink.dev", "demo1234")
-
-
-def _login(email: str, pw: str) -> dict:
-    r = requests.post(f"{BASE_URL}/api/auth/login", json={"email": email, "password": pw})
-    assert r.status_code == 200, f"Login failed for {email}: {r.status_code} {r.text}"
-    data = r.json()
-    assert 'access_token' in data or 'token' in data
-    tok = data.get('access_token') or data.get('token')
-    uid = data.get('user', {}).get('id') or data.get('user_id')
-    return {"token": tok, "user_id": uid, "user": data.get('user', {})}
+from conftest import BASE_URL, make_musician, make_organizer
 
 
 def _headers(tok: str) -> dict:
     return {"Authorization": f"Bearer {tok}", "Content-Type": "application/json"}
 
 
-# ---------- fixtures ----------
 @pytest.fixture(scope="module")
-def ariya():
-    return _login(*ARIYA)
-
-
-@pytest.fixture(scope="module")
-def kabir():
-    return _login(*KABIR)
+def ariya(api_client):
+    u = make_musician(api_client, "Refinement Musician A")
+    return {"token": u["token"], "user_id": u["id"], "user": u["user"], "h": u["h"]}
 
 
 @pytest.fixture(scope="module")
-def sunset():
-    return _login(*SUNSET)
+def kabir(api_client):
+    u = make_musician(api_client, "Refinement Musician B")
+    return {"token": u["token"], "user_id": u["id"], "user": u["user"], "h": u["h"]}
+
+
+@pytest.fixture(scope="module")
+def sunset(api_client):
+    u = make_organizer(api_client, "Refinement Organizer")
+    return {"token": u["token"], "user_id": u["id"], "user": u["user"], "h": u["h"]}
 
 
 # ---------- SANITY ----------
@@ -199,7 +178,7 @@ class TestGigDelete:
         payload = {
             "title": "TEST_gig_del",
             "description": "throwaway",
-            "city": "Mumbai",
+            "city": "Hyderabad",
             "date": "2026-12-01",
             "event_type": "wedding",
             "genre": "Jazz",
@@ -233,7 +212,7 @@ class TestGigDelete:
 class TestEntityDeletes:
     def test_delete_band_owner_only(self, ariya, kabir):
         r = requests.post(f"{BASE_URL}/api/bands",
-                          json={"name": "TEST_band", "genres": ["Jazz"], "city": "Mumbai"},
+                          json={"name": "TEST_band", "genres": ["Jazz"], "city": "Hyderabad"},
                           headers=_headers(ariya['token']))
         assert r.status_code == 200, r.text
         bid = r.json()['id']
@@ -248,7 +227,7 @@ class TestEntityDeletes:
     def test_delete_equipment_owner_only(self, ariya, kabir):
         r = requests.post(f"{BASE_URL}/api/equipment",
                           json={"title": "TEST_eq", "category": "guitar",
-                                "listing_type": "rent", "price": 500, "city": "Mumbai",
+                                "listing_type": "rent", "price": 500, "city": "Hyderabad",
                                 "description": "throwaway"},
                           headers=_headers(ariya['token']))
         assert r.status_code == 200, r.text
@@ -260,7 +239,7 @@ class TestEntityDeletes:
 
     def test_delete_studio_owner_only(self, ariya, kabir):
         r = requests.post(f"{BASE_URL}/api/studios",
-                          json={"name": "TEST_studio", "city": "Mumbai",
+                          json={"name": "TEST_studio", "city": "Hyderabad",
                                 "hourly_rate": 800, "description": "x"},
                           headers=_headers(ariya['token']))
         assert r.status_code == 200, r.text
@@ -273,7 +252,7 @@ class TestEntityDeletes:
     def test_delete_lesson_teacher_only(self, ariya, kabir):
         r = requests.post(f"{BASE_URL}/api/lessons",
                           json={"title": "TEST_lesson", "subject": "Vocals",
-                                "city": "Mumbai", "price_per_hour": 700,
+                                "city": "Hyderabad", "price_per_hour": 700,
                                 "description": "x"},
                           headers=_headers(ariya['token']))
         assert r.status_code == 200, r.text

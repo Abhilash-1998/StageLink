@@ -1,23 +1,24 @@
-import Constants from "expo-constants";
-
-// Fallback keeps shared APKs working even when EXPO_PUBLIC_BACKEND_URL
-// is not configured in EAS environment variables.
-const DEFAULT_BACKEND_URL = "https://stagelink-api-production-f0c5.up.railway.app";
-
+/**
+ * Backend API URL — controlled by frontend/.env only.
+ *
+ * In `.env`, uncomment ONE of:
+ *   - Production: https://stagelink-api-production-f0c5.up.railway.app
+ *   - Staging:    https://stagelink-api-staging-staging.up.railway.app
+ *
+ * Restart Metro after changing `.env`.
+ */
 function normalize(url: string | undefined | null): string {
   return String(url || "").trim().replace(/\/+$/, "");
 }
 
 export function getBackendBaseUrl(): string {
-  const envUrl = normalize(process.env.EXPO_PUBLIC_BACKEND_URL);
-  if (envUrl) return envUrl;
-
-  const extraUrl = normalize(
-    (Constants.expoConfig?.extra as { backendUrl?: string } | undefined)?.backendUrl,
-  );
-  if (extraUrl) return extraUrl;
-
-  return DEFAULT_BACKEND_URL;
+  const url = normalize(process.env.EXPO_PUBLIC_BACKEND_URL);
+  if (!url) {
+    throw new Error(
+      "EXPO_PUBLIC_BACKEND_URL is not set. Edit frontend/.env and restart Metro.",
+    );
+  }
+  return url;
 }
 
 export const API_BASE = getBackendBaseUrl();

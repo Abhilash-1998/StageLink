@@ -1,26 +1,34 @@
-"""StageLink Auth Audit — validates full auth/session/role flow.
+"""gigZee Auth Audit — validates full auth/session/role flow.
 
 Covers:
-- POST /api/auth/register (validation, dup, tokens+user)
-- POST /api/auth/login (seeded, invalid, bruteforce lock)
+- POST /api/auth/register (validation, dup, tokens+user, verification_token required)
+- POST /api/auth/login (register-then-login, invalid, bruteforce lock)
 - POST /api/auth/refresh (valid + invalid)
 - GET  /api/auth/me (valid, missing, malformed)
 - POST /api/auth/logout
 - POST /api/auth/roles (musician / both)
 - POST /api/auth/active-role (not-in-roles, not-onboarded, valid)
+
+No seed/demo accounts — tests register their own users.
 """
 import uuid
-import time
 import pytest
-import requests
-from conftest import BASE_URL
+from conftest import BASE_URL, make_musician, make_organizer, obtain_signup_verification_token, register_user
 
 
 # ---------------- helpers ----------------
 def _register(api, email=None, password="TestPass1", full_name="TEST User"):
-    email = email or f"TEST_{uuid.uuid4().hex[:8]}@stagelink.dev"
-    r = api.post(f"{BASE_URL}/api/auth/register",
-                 json={"email": email, "password": password, "full_name": full_name})
+    email = email or f"test_{uuid.uuid4().hex[:8]}@example.com"
+    verification_token = obtain_signup_verification_token(email)
+    r = api.post(
+        f"{BASE_URL}/api/auth/register",
+        json={
+            "email": email,
+            "password": password,
+            "full_name": full_name,
+            "verification_token": verification_token,
+        },
+    )
     return r, email
 
 
@@ -33,7 +41,7 @@ class TestHealth:
     def test_root(self, api_client):
         r = api_client.get(f"{BASE_URL}/api/", timeout=15)
         assert r.status_code == 200
-        assert r.json().get("app") == "StageLink API"
+        assert r.json().get("app") == "gigZee API"
 
 
 # ---------------- Register ----------------
@@ -50,60 +58,105 @@ class TestRegister:
         assert u["onboarded"] is False
 
     def test_register_invalid_email(self, api_client):
-        r = api_client.post(f"{BASE_URL}/api/auth/register",
-                            json={"email": "not-an-email", "password": "TestPass1", "full_name": "X Y"})
+        r = api_client.post(
+            f"{BASE_URL}/api/auth/register",
+            json={
+                "email": "not-an-email",
+                "password": "TestPass1",
+                "full_name": "X Y",
+                "verification_token": "x" * 32,
+            },
+        )
         assert r.status_code == 422
 
     def test_register_weak_password_too_short(self, api_client):
-        r = api_client.post(f"{BASE_URL}/api/auth/register",
-                            json={"email": f"TEST_{uuid.uuid4().hex[:6]}@stagelink.dev",
-                                  "password": "abc12", "full_name": "X Y"})
+        email = f"test_{uuid.uuid4().hex[:6]}@example.com"
+        token = obtain_signup_verification_token(email)
+        r = api_client.post(
+            f"{BASE_URL}/api/auth/register",
+            json={
+                "email": email,
+                "password": "abc12",
+                "full_name": "X Y",
+                "verification_token": token,
+            },
+        )
         assert r.status_code == 422
 
     def test_register_password_needs_letters_and_numbers(self, api_client):
-        r = api_client.post(f"{BASE_URL}/api/auth/register",
-                            json={"email": f"TEST_{uuid.uuid4().hex[:6]}@stagelink.dev",
-                                  "password": "onlyletters", "full_name": "X Y"})
+        email = f"test_{uuid.uuid4().hex[:6]}@example.com"
+        token = obtain_signup_verification_token(email)
+        r = api_client.post(
+            f"{BASE_URL}/api/auth/register",
+            json={
+                "email": email,
+                "password": "onlyletters",
+                "full_name": "X Y",
+                "verification_token": token,
+            },
+        )
         assert r.status_code == 422
 
     def test_register_duplicate_email(self, api_client):
         r1, email = _register(api_client)
         assert r1.status_code == 200
-        r2, _ = _register(api_client, email=email)
+        r2 = api_client.post(
+            f"{BASE_URL}/api/auth/register",
+            json={
+                "email": email,
+                "password": "TestPass1",
+                "full_name": "Another User",
+                "verification_token": "x" * 32,
+            },
+        )
         assert r2.status_code == 400
         assert "already" in r2.json().get("detail", "").lower()
+
+    def test_register_requires_verification_token(self, api_client):
+        r = api_client.post(
+            f"{BASE_URL}/api/auth/register",
+            json={
+                "email": f"test_{uuid.uuid4().hex[:6]}@example.com",
+                "password": "TestPass1",
+                "full_name": "X Y",
+            },
+        )
+        assert r.status_code == 422
 
 
 # ---------------- Login ----------------
 class TestLogin:
-    def test_login_seeded_musician(self, api_client):
+    def test_login_registered_musician(self, api_client):
+        m = make_musician(api_client, "Login Musician")
         r = api_client.post(f"{BASE_URL}/api/auth/login",
-                            json={"email": "ariya.kapoor@stagelink.dev", "password": "demo1234"})
+                            json={"email": m["email"], "password": m["password"]})
         assert r.status_code == 200, r.text
         j = r.json()
         assert j["access_token"] and j["refresh_token"]
         u = j["user"]
-        assert u["email"] == "ariya.kapoor@stagelink.dev"
+        assert u["email"] == m["email"]
         assert "musician" in u["roles"]
         assert u["active_role"] == "musician"
         assert u["onboarded"] is True
 
-    def test_login_seeded_organizer(self, api_client):
+    def test_login_registered_organizer(self, api_client):
+        o = make_organizer(api_client, "Login Organizer")
         r = api_client.post(f"{BASE_URL}/api/auth/login",
-                            json={"email": "sunset@stagelink.dev", "password": "demo1234"})
+                            json={"email": o["email"], "password": o["password"]})
         assert r.status_code == 200, r.text
         u = r.json()["user"]
         assert "organizer" in u["roles"] and u["active_role"] == "organizer"
 
     def test_login_invalid_password(self, api_client):
+        u = register_user(api_client)
         r = api_client.post(f"{BASE_URL}/api/auth/login",
-                            json={"email": "ariya.kapoor@stagelink.dev", "password": "wrongPass9"})
+                            json={"email": u["email"], "password": "wrongPass9"})
         assert r.status_code == 401
         assert r.json().get("detail") == "Invalid email or password"
 
     def test_login_unknown_email(self, api_client):
         r = api_client.post(f"{BASE_URL}/api/auth/login",
-                            json={"email": f"ghost_{uuid.uuid4().hex[:6]}@stagelink.dev", "password": "wrongPass9"})
+                            json={"email": f"ghost_{uuid.uuid4().hex[:6]}@example.com", "password": "wrongPass9"})
         assert r.status_code == 401
 
     def test_login_bruteforce_lock(self, api_client):
@@ -125,14 +178,15 @@ class TestLogin:
 # ---------------- Refresh ----------------
 class TestRefresh:
     def test_refresh_valid(self, api_client):
+        u = register_user(api_client)
         login = api_client.post(f"{BASE_URL}/api/auth/login",
-                                json={"email": "ariya.kapoor@stagelink.dev", "password": "demo1234"}).json()
+                                json={"email": u["email"], "password": u["password"]}).json()
         rt = login["refresh_token"]
         r = api_client.post(f"{BASE_URL}/api/auth/refresh", json={"refresh_token": rt})
         assert r.status_code == 200, r.text
         j = r.json()
         assert j["access_token"] and j["refresh_token"]
-        assert j["user"]["email"] == "ariya.kapoor@stagelink.dev"
+        assert j["user"]["email"] == u["email"]
         # new access token should be usable on /me
         me = api_client.get(f"{BASE_URL}/api/auth/me", headers=_headers(j["access_token"]))
         assert me.status_code == 200
@@ -143,8 +197,9 @@ class TestRefresh:
 
     def test_refresh_wrong_token_type(self, api_client):
         # pass access token where refresh expected
+        u = register_user(api_client)
         login = api_client.post(f"{BASE_URL}/api/auth/login",
-                                json={"email": "ariya.kapoor@stagelink.dev", "password": "demo1234"}).json()
+                                json={"email": u["email"], "password": u["password"]}).json()
         r = api_client.post(f"{BASE_URL}/api/auth/refresh", json={"refresh_token": login["access_token"]})
         assert r.status_code == 401
 
@@ -152,12 +207,11 @@ class TestRefresh:
 # ---------------- Me ----------------
 class TestMe:
     def test_me_valid(self, api_client):
-        j = api_client.post(f"{BASE_URL}/api/auth/login",
-                            json={"email": "ariya.kapoor@stagelink.dev", "password": "demo1234"}).json()
-        r = api_client.get(f"{BASE_URL}/api/auth/me", headers=_headers(j["access_token"]))
+        m = make_musician(api_client, "Me Musician")
+        r = api_client.get(f"{BASE_URL}/api/auth/me", headers=_headers(m["token"]))
         assert r.status_code == 200
         u = r.json()
-        assert u["email"] == "ariya.kapoor@stagelink.dev"
+        assert u["email"] == m["email"]
         assert "musician" in u["roles"]
 
     def test_me_missing_token(self, api_client):
@@ -172,9 +226,8 @@ class TestMe:
 # ---------------- Logout ----------------
 class TestLogout:
     def test_logout_ok(self, api_client):
-        j = api_client.post(f"{BASE_URL}/api/auth/login",
-                            json={"email": "sunset@stagelink.dev", "password": "demo1234"}).json()
-        r = api_client.post(f"{BASE_URL}/api/auth/logout", headers=_headers(j["access_token"]))
+        o = make_organizer(api_client, "Logout Org")
+        r = api_client.post(f"{BASE_URL}/api/auth/logout", headers=_headers(o["token"]))
         assert r.status_code == 200
         assert r.json() == {"ok": True}
 
@@ -204,31 +257,34 @@ class TestRoles:
         assert set(u["roles"]) == {"musician", "organizer"}
         assert u["active_role"] in ("musician", "organizer")
 
-    def test_active_role_rejects_role_not_in_user_roles(self, api_client):
+    def test_active_role_auto_adds_missing_role(self, api_client):
+        """Action-based model: switching active_role adds it to roles if missing."""
         r, _ = _register(api_client)
         tok = r.json()["access_token"]
         api_client.post(f"{BASE_URL}/api/auth/roles",
                         json={"roles": ["musician"]}, headers=_headers(tok))
         rr = api_client.post(f"{BASE_URL}/api/auth/active-role",
                              json={"active_role": "organizer"}, headers=_headers(tok))
-        assert rr.status_code == 400
+        assert rr.status_code == 200, rr.text
+        u = rr.json()
+        assert "organizer" in u["roles"]
+        assert u["active_role"] == "organizer"
 
-    def test_active_role_rejects_if_not_onboarded(self, api_client):
+    def test_active_role_works_before_onboarding(self, api_client):
+        """Active role can be set before profile onboarding (action-based)."""
         r, _ = _register(api_client)
         tok = r.json()["access_token"]
         api_client.post(f"{BASE_URL}/api/auth/roles",
                         json={"roles": ["musician", "organizer"]}, headers=_headers(tok))
         rr = api_client.post(f"{BASE_URL}/api/auth/active-role",
                              json={"active_role": "organizer"}, headers=_headers(tok))
-        assert rr.status_code == 400
-        assert "onboard" in rr.json().get("detail", "").lower() or "profile" in rr.json().get("detail", "").lower()
+        assert rr.status_code == 200, rr.text
+        assert rr.json()["active_role"] == "organizer"
 
     def test_active_role_accepts_after_onboarding(self, api_client):
-        # seeded ariya is a musician with onboarded=True and roles=['musician']
-        j = api_client.post(f"{BASE_URL}/api/auth/login",
-                            json={"email": "ariya.kapoor@stagelink.dev", "password": "demo1234"}).json()
-        tok = j["access_token"]
+        # onboarded musician can set active_role to musician
+        m = make_musician(api_client, "Active Role Musician")
         rr = api_client.post(f"{BASE_URL}/api/auth/active-role",
-                             json={"active_role": "musician"}, headers=_headers(tok))
+                             json={"active_role": "musician"}, headers=_headers(m["token"]))
         assert rr.status_code == 200
         assert rr.json()["active_role"] == "musician"

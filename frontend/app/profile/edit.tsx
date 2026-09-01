@@ -156,6 +156,11 @@ export default function EditProfile() {
   };
 
   const saveAll = async () => {
+    if (!p?.cover_url) {
+      setErr("Add a cover photo");
+      Alert.alert("Cover photo required", "Lists need a cover image so your profile looks complete.");
+      return;
+    }
     // Save pending portfolio link first so it isn't lost if only "Save" is tapped.
     const pendingUrl = newPortUrl.trim();
     if (pendingUrl) {
@@ -374,18 +379,8 @@ export default function EditProfile() {
                 accessibilityLabel="Change cover photo"
               >
                 <Ionicons name="image" size={14} color="#fff" />
-                <Text style={styles.coverActionTxt}>{p.cover_url ? "Change cover" : "Add cover"}</Text>
+                <Text style={styles.coverActionTxt}>{p.cover_url ? "Change cover" : "Add cover (required)"}</Text>
               </Pressable>
-              {!!p.cover_url && (
-                <Pressable
-                  testID="clear-cover"
-                  onPress={() => update({ cover_url: "" })}
-                  style={styles.coverClear}
-                  accessibilityLabel="Remove cover photo"
-                >
-                  <Ionicons name="close" size={14} color="#fff" />
-                </Pressable>
-              )}
             </View>
 
             <Pressable

@@ -22,7 +22,7 @@ type AuthCtx = {
   user: User | null;
   status: AuthStatus;
   login: (email: string, password: string) => Promise<void>;
-  register: (email: string, password: string, full_name: string) => Promise<void>;
+  register: (email: string, password: string, full_name: string, verification_token: string) => Promise<void>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
   setUserLocal: (u: User) => void;
@@ -225,10 +225,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setStatus("authenticated");
   };
 
-  const register = async (email: string, password: string, full_name: string) => {
+  const register = async (
+    email: string,
+    password: string,
+    full_name: string,
+    verification_token: string,
+  ) => {
     const res = await fetch(`${API_URL}/auth/register`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: email.trim().toLowerCase(), password, full_name: full_name.trim() }),
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: email.trim().toLowerCase(),
+        password,
+        full_name: full_name.trim(),
+        verification_token,
+      }),
     });
     const j = await res.json().catch(() => ({}));
     if (!res.ok) {

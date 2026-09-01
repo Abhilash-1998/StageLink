@@ -1,7 +1,6 @@
 """
-StageLink Iteration 7 — Unified Profile tests.
-Covers the new public entities endpoint and regressions on entities/mine,
-followers/following, follow toggle, and post/comment CRUD.
+gigZee Iteration 7 — Unified Profile tests.
+Creates users via make_musician (no demo seed accounts).
 """
 import os
 import pytest
@@ -9,34 +8,19 @@ import requests
 from dotenv import load_dotenv
 from pathlib import Path
 
-load_dotenv(Path(__file__).parent.parent.parent / 'frontend' / '.env')
-BASE_URL = os.environ.get('EXPO_PUBLIC_BACKEND_URL').rstrip('/')
-
-ARIYA = ("ariya.kapoor@stagelink.dev", "demo1234")
-KABIR = ("kabir.rao@stagelink.dev", "demo1234")
-
-
-# ---------- shared login helper ----------
-def _login(email: str, pwd: str):
-    r = requests.post(f"{BASE_URL}/api/auth/login", json={"email": email, "password": pwd})
-    assert r.status_code == 200, f"Login {email} failed: {r.status_code} {r.text}"
-    body = r.json()
-    tok = body.get("access_token") or body.get("token")
-    uid = (body.get("user") or {}).get("id")
-    assert tok and uid, f"Missing token/user in {body}"
-    return tok, uid
+from conftest import BASE_URL, make_musician
 
 
 @pytest.fixture(scope="module")
-def ariya():
-    tok, uid = _login(*ARIYA)
-    return {"token": tok, "id": uid, "h": {"Authorization": f"Bearer {tok}", "Content-Type": "application/json"}}
+def ariya(api_client):
+    u = make_musician(api_client, "Unified Profile A")
+    return {"token": u["token"], "id": u["id"], "h": u["h"]}
 
 
 @pytest.fixture(scope="module")
-def kabir():
-    tok, uid = _login(*KABIR)
-    return {"token": tok, "id": uid, "h": {"Authorization": f"Bearer {tok}", "Content-Type": "application/json"}}
+def kabir(api_client):
+    u = make_musician(api_client, "Unified Profile B")
+    return {"token": u["token"], "id": u["id"], "h": u["h"]}
 
 
 # ---------- 1. NEW: /users/{uid}/entities public read ----------
@@ -178,7 +162,7 @@ class TestEntityDelete:
     def test_create_delete_gig(self, ariya):
         # try as musician; if endpoint requires organizer role, skip
         payload = {
-            "title": "TEST_gig_iter7", "description": "test", "city": "Mumbai",
+            "title": "TEST_gig_iter7", "description": "test", "city": "Hyderabad",
             "date": "2026-06-01", "budget": 5000, "genres": ["Jazz"],
         }
         r = requests.post(f"{BASE_URL}/api/gigs", headers=ariya["h"], json=payload)

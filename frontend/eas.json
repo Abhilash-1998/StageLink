@@ -1,7 +1,7 @@
 {
   "cli": {
     "version": ">= 16.0.0",
-    "appVersionSource": "remote"
+    "appVersionSource": "local"
   },
   "build": {
     "development": {
@@ -13,18 +13,30 @@
       "android": {
         "buildType": "apk"
       },
-      "channel": "development"
+      "channel": "development",
+      "env": {
+        "EXPO_PUBLIC_BACKEND_URL": "https://stagelink-api-staging-staging.up.railway.app"
+      }
     },
     "preview": {
       "distribution": "internal",
       "channel": "preview",
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_BACKEND_URL": "https://stagelink-api-staging-staging.up.railway.app"
       }
     },
     "production": {
       "channel": "production",
-      "autoIncrement": true
+      "autoIncrement": false,
+      "android": {
+        "buildType": "app-bundle"
+      },
+      "env": {
+        "EXPO_PUBLIC_BACKEND_URL": "https://stagelink-api-production-f0c5.up.railway.app"
+      }
     }
   },
   "submit": {

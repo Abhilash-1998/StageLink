@@ -72,7 +72,6 @@ export default function EditListing() {
   const [listingType, setListingType] = useState<"rent" | "sale">("rent");
   const [format, setFormat] = useState<"online" | "in-person" | "both">("both");
   const [images, setImages] = useState<string[]>([]);
-  const [coverUrl, setCoverUrl] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!id || !endpoint) {
@@ -91,7 +90,8 @@ export default function EditListing() {
       if (listingKind === "band") {
         setTitle(item.name || "");
         setDesc(item.description || "");
-        setCoverUrl(item.cover_url || null);
+        const photos = collectUserImages(item);
+        setImages(photos);
       } else if (listingKind === "equipment") {
         setTitle(item.title || "");
         setDesc(item.description || "");
@@ -100,7 +100,6 @@ export default function EditListing() {
         setListingType(item.listing_type === "sale" ? "sale" : "rent");
         const photos = collectUserImages(item);
         setImages(photos);
-        setCoverUrl(photos[0] || item.cover_url || null);
       } else if (listingKind === "studio") {
         setTitle(item.name || "");
         setDesc(item.description || "");
@@ -108,14 +107,14 @@ export default function EditListing() {
         setMapsUrl(item.maps_url || "");
         const photos = collectUserImages(item);
         setImages(photos);
-        setCoverUrl(photos[0] || item.cover_url || null);
       } else if (listingKind === "lesson") {
         setTitle(item.title || "");
         setDesc(item.description || "");
         setPrice(item.price_per_hour != null ? String(item.price_per_hour) : "");
         setCategory(item.subject || LESSON_SUBJECTS[0] || "Guitar");
         setFormat(item.format || "both");
-        setCoverUrl(item.cover_url || null);
+        const photos = collectUserImages(item);
+        setImages(photos);
       }
     } catch (e: any) {
       setErr(e?.message || "Could not load listing");
@@ -143,13 +142,15 @@ export default function EditListing() {
       let body: any;
       if (listingKind === "band") {
         if (!title.trim()) throw new Error("Band name required");
+        const photos = images.slice(0, MAX_IMAGES);
+        if (photos.length < 1) throw new Error("Add a cover photo");
         body = {
           name: title.trim(),
           city: DEFAULT_CITY,
           description: desc,
           genres: [],
           looking_for: [],
-          cover_url: coverUrl || undefined,
+          cover_url: photos[0],
         };
       } else if (listingKind === "equipment") {
         if (!title.trim() || !price.trim()) throw new Error("Title and price required");
@@ -180,6 +181,8 @@ export default function EditListing() {
         };
       } else if (listingKind === "lesson") {
         if (!title.trim() || !price.trim()) throw new Error("Title and price required");
+        const photos = images.slice(0, MAX_IMAGES);
+        if (photos.length < 1) throw new Error("Add a cover photo");
         body = {
           title: title.trim(),
           subject: category,
@@ -187,7 +190,7 @@ export default function EditListing() {
           price_per_hour: parseInt(price, 10) || 0,
           format,
           description: desc,
-          cover_url: coverUrl || undefined,
+          cover_url: photos[0],
         };
       } else {
         throw new Error("Unsupported listing type");
@@ -223,7 +226,7 @@ export default function EditListing() {
   }
 
   const photoSlotsLeft = Math.max(0, MAX_IMAGES - images.length);
-  const showPhotos = listingKind === "equipment" || listingKind === "studio";
+  const showPhotos = true;
 
   return (
     <SafeAreaView style={styles.bg} edges={["top"]}>
@@ -241,7 +244,7 @@ export default function EditListing() {
             <>
               <Text style={styles.label}>Photos ({images.length}/{MAX_IMAGES})</Text>
               <Text style={[styles.label, { marginTop: 0, marginBottom: 8, color: theme.textDim, fontWeight: "500" }]}>
-                Required — at least 1 photo
+                Required — at least 1 photo. First photo is the cover.
               </Text>
               <View style={styles.eqGrid}>
                 {images.map((uri, idx) => (

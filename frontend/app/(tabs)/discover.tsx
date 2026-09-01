@@ -242,7 +242,12 @@ export default function Discover() {
           )}
         </View>
       </View>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ maxHeight: 56 }} contentContainerStyle={styles.chipRow}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.chipScroll}
+        contentContainerStyle={styles.chipRow}
+      >
         {TYPES.map(t => (
           <Pressable key={t} testID={`type-${t}`} onPress={() => switchType(t)} style={[styles.chip, type === t && styles.chipOn]}>
             <Text style={[styles.chipTxt, type === t && styles.chipTxtOn]}>{t}</Text>
@@ -271,8 +276,9 @@ const styles = StyleSheet.create({
   h1: { ...type.h1, color: theme.text },
   searchWrap: { flexDirection: "row", alignItems: "center", backgroundColor: theme.bg2, paddingHorizontal: 14, borderRadius: theme.radius.pill, borderWidth: 1, borderColor: theme.border, gap: 8, marginTop: 12 },
   search: { ...type.bodySm, flex: 1, color: theme.text, paddingVertical: 12 },
-  chipRow: { paddingHorizontal: 20, gap: 8, paddingVertical: 8 },
-  chip: { flexShrink: 0, height: 36, paddingHorizontal: 14, borderRadius: theme.radius.pill, backgroundColor: theme.bg2, borderWidth: 1, borderColor: theme.border, alignItems: "center", justifyContent: "center" },
+  chipScroll: { flexGrow: 0, minHeight: 52, maxHeight: 56 },
+  chipRow: { paddingHorizontal: 20, paddingVertical: 10, alignItems: "center", columnGap: 10 },
+  chip: { flexShrink: 0, height: 36, marginRight: 10, paddingHorizontal: 16, borderRadius: theme.radius.pill, backgroundColor: theme.bg2, borderWidth: 1, borderColor: theme.border, alignItems: "center", justifyContent: "center" },
   chipOn: { backgroundColor: theme.brandTint, borderColor: theme.brand },
   chipTxt: { ...type.caption, color: theme.textDim, fontWeight: "500" },
   chipTxtOn: { ...type.caption, color: theme.text, fontWeight: "700" },

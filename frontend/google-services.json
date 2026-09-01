@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "366393066003",
+    "project_id": "gigze-abb23",
+    "storage_bucket": "gigze-abb23.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:366393066003:android:f6a12f7473084d217d75e6",
+        "android_client_info": {
+          "package_name": "com.gigze.GigZe"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBnOiNtqJX_67WsW67tVQMTSanCGloyqGs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

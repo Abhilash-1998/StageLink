@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { View, Text, StyleSheet, ScrollView, TextInput, Pressable, ActivityIndicator, KeyboardAvoidingView, Platform } from "react-native";
+import { View, Text, StyleSheet, ScrollView, TextInput, Pressable, ActivityIndicator, KeyboardAvoidingView, Platform, Image } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useAuth } from "@/src/context/AuthContext";
@@ -7,6 +7,7 @@ import { theme, type } from "@/src/theme";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { GENRES, INSTRUMENTS as INSTRS, EVENT_TYPES as TYPES, DEFAULT_CITY } from "@/src/data/options";
 import { DatePickerField } from "@/src/components/DatePickerField";
+import { MediaPickerSheet, PickedMedia } from "@/src/components/MediaPickerSheet";
 
 export default function NewGig() {
   const { fetchApi } = useAuth();
@@ -18,6 +19,8 @@ export default function NewGig() {
   const [instr, setInstr] = useState("Vocals");
   const [budget, setBudget] = useState("");
   const [desc, setDesc] = useState("");
+  const [coverUri, setCoverUri] = useState<string | null>(null);
+  const [showPicker, setShowPicker] = useState(false);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -26,12 +29,15 @@ export default function NewGig() {
     if (!title.trim() || !city.trim() || !date || !budget.trim() || !desc.trim()) {
       setErr("Please fill all required fields"); return;
     }
+    if (!coverUri) {
+      setErr("Add a cover photo"); return;
+    }
     setLoading(true);
     try {
       const g: any = await fetchApi("/gigs", {
         method: "POST", body: JSON.stringify({
           title, city, date, event_type: type, genre, instrument_needed: instr,
-          budget: parseInt(budget), description: desc,
+          budget: parseInt(budget), description: desc, cover_url: coverUri,
         }),
       });
       router.replace(`/gig/${g.id}`);
@@ -51,6 +57,21 @@ export default function NewGig() {
           <View style={{ width: 24 }} />
         </View>
         <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 120 }} keyboardShouldPersistTaps="handled">
+          <Text style={styles.label}>Cover photo</Text>
+          <Text style={styles.hint}>Required — this is what people see in Discover.</Text>
+          {coverUri ? (
+            <View style={styles.coverWrap}>
+              <Image source={{ uri: coverUri }} style={styles.coverImg} />
+              <Pressable testID="gig-clear-cover" onPress={() => setCoverUri(null)} style={styles.coverX}>
+                <Ionicons name="close" size={16} color="#fff" />
+              </Pressable>
+            </View>
+          ) : (
+            <Pressable testID="gig-add-cover" onPress={() => setShowPicker(true)} style={styles.addCover}>
+              <Ionicons name="camera" size={22} color={theme.brand} />
+              <Text style={styles.addCoverTxt}>Add cover</Text>
+            </Pressable>
+          )}
           <Text style={styles.label}>Title</Text>
           <TextInput testID="new-title" style={styles.input} value={title} onChangeText={setTitle} placeholder="Rooftop Jazz Night" placeholderTextColor={theme.textDim} />
           <Text style={styles.label}>City</Text>
@@ -88,6 +109,18 @@ export default function NewGig() {
           </Pressable>
         </ScrollView>
       </KeyboardAvoidingView>
+      <MediaPickerSheet
+        visible={showPicker}
+        onClose={() => setShowPicker(false)}
+        onPicked={(items: PickedMedia[]) => {
+          const photo = items.find((i) => i.type === "image");
+          if (photo) setCoverUri(photo.uri);
+        }}
+        allowVideo={false}
+        allowImage
+        allowsMultiple={false}
+        selectionLimit={1}
+      />
     </SafeAreaView>
   );
 }
@@ -104,6 +137,15 @@ const styles = StyleSheet.create({
   chipTxt: { ...type.caption, color: theme.textDim, fontWeight: "500", textTransform: "capitalize" },
   chipTxtOn: { ...type.caption, color: theme.text, fontWeight: "700", textTransform: "capitalize" },
   err: { ...type.caption, color: theme.error, marginTop: 12 },
+  hint: { ...type.caption, color: theme.textDim, marginBottom: 8 },
+  coverWrap: { height: 160, borderRadius: theme.radius.md, overflow: "hidden", backgroundColor: theme.bg3, position: "relative" },
+  coverImg: { width: "100%", height: "100%" },
+  coverX: { position: "absolute", top: 8, right: 8, width: 28, height: 28, borderRadius: 14, backgroundColor: "rgba(0,0,0,0.65)", alignItems: "center", justifyContent: "center" },
+  addCover: {
+    height: 120, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.brand, borderStyle: "dashed",
+    backgroundColor: theme.brandTint, alignItems: "center", justifyContent: "center", gap: 6,
+  },
+  addCoverTxt: { ...type.caption, color: theme.brand, fontWeight: "700" },
   cta: { backgroundColor: theme.brand, borderRadius: theme.radius.pill, paddingVertical: 16, alignItems: "center", marginTop: 24 },
   ctaTxt: { ...type.titleMd, color: "#fff", fontWeight: "700" },
 });
